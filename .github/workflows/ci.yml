@@ -96,13 +96,16 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # `bunx tauri` resolves the CLI from node_modules, so the runner has to install
+      # first — without this it fails with "could not determine executable to run".
+      - name: Install dependencies
+        run: bun install
+
       # `--target aarch64` builds one ABI rather than all four: it is the shape the first
       # pass was verified with, and four ABIs of a debug Rust build is a lot of minutes for
       # the same answer. A release builds every ABI.
       - name: Build the APK
         run: bunx tauri android build --apk --debug --target aarch64
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
       - uses: actions/upload-artifact@v4
         with:
