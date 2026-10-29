@@ -71,7 +71,13 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # `accept-android-sdk-licenses: false` is deliberate: the action runs
+      # `sdkmanager --licenses` non-interactively and the newer cmdline-tools exit 1 at
+      # the prompt instead of accepting ("7 of 8 SDK package licenses not accepted").
+      # The step below accepts them the way a human does, with `yes`.
       - uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: false
 
       - name: Install the Android SDK packages and the NDK
         run: |
