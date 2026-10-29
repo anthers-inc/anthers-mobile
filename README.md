@@ -64,6 +64,11 @@ The toolchain this repository needs, none of which is a Rust or Node concern:
 | Android NDK | 27.0.12077973 | `NDK_HOME` |
 | Rust targets | `aarch64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android`, `x86_64-linux-android` | `rustup target add …` |
 
+The Makefile defaults those three to the conventional locations above and exports them to every
+command it runs, so `make` works in a shell that has never read them — and a value already in
+the environment wins over the default. The export below is what those defaults mirror; set it
+only when a machine keeps its toolchain somewhere else.
+
 ```sh
 export JAVA_HOME="$HOME/.local/jdk-21"
 export ANDROID_HOME="$HOME/Android/Sdk"
