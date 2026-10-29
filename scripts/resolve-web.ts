@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Put a built Anthers web app at ./web-dist, which is what Tauri bundles.
+//
+// This repository holds the mobile SHELL. The thing inside the window is the platform's
+// web app, built from anthers-inc/anthers — the shell has no UI of its own and never has.
+// So the only real question here is where the build comes from, and there are three
+// answers in priority order, the same three the desktop shell offers:
+//
+//   1. ANTHERS_WEB=/path/to/dist   — an explicit, already-built dist. Overrides everything.
+//   2. a sibling checkout          — built on demand. The working setup for local dev.
+//   3. the pinned release asset    — downloaded, signature-verified. What CI and a clean
+//                                    machine use. Force with ANTHERS_WEB_SOURCE=asset.
+//
+// 🚨 Every pinned download is VERIFIED before it is installed, against the Ed25519
+// key pinned in `scripts/web-dist-signing.pub`, and fails closed: a release that
+// carries no signature beside the archive is refused, not installed. The verifier is
+// `scripts/web-sig.ts`; the format's contract and owner live in the platform repo's
+// `scripts/sign-web-dist.ts`. TLS to GitHub is not the reason for this — a signature
+// ties the download to a key CI holds, so a compromised release pipeline cannot hand
+// this shell a tampered bundle.
+//
+// 🚨 Why a RELEASE ASSET and not a package on GitHub Packages: authentication is
+// required even for PUBLIC packages, so a package would mean every contributor and
+// every CI run needing a token to install a public dependency of a public project.
+// A release asset downloads anonymously. The desktop shell settled this first.
+//
+// ⚠️ The sibling is looked up under BOTH spellings, `../anthers` and `../Anthers`,
+// because the desktop's resolver checks only the capitalized one and this machine's
+// platform checkout is lowercase — so the desktop silently falls through to the pinned
+// asset here instead of building the tree in front of it.
+
+import { existsSync, rmSync, mkdirSync } from "node:fs";
+import { cp, readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { verifyWebDist } from "./web-sig.ts";
+
+const ROOT = join(import.meta.dir, "..");
+const DEST = join(ROOT, "web-dist");
+const SIBLINGS = [resolve(ROOT, "..", "anthers"), resolve(ROOT, "..", "Anthers")];
+
+/** The platform release this shell is built against. Bump deliberately. */
+const pinned = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8")).anthersWeb as
+	| string
+	| undefined;
+
+function place(from: string, how: string) {
+	rmSync(DEST, { recursive: true, force: true });
+	mkdirSync(DEST, { recursive: true });
+	return cp(from, DEST, { recursive: true }).then(() => {
+		console.log(`[web] ${how}\n[web] → ${DEST}`);
+	});
+}
+
+// ── 1. explicit ──────────────────────────────────────────────────────────────
+const explicit = process.env.ANTHERS_WEB;
+if (explicit) {
+	const from = resolve(explicit);
+	if (!existsSync(from)) {
+		console.error(`[web] ANTHERS_WEB is set to ${from}, which does not exist.`);
+		process.exit(1);
+	}
+	await place(from, `using ANTHERS_WEB (${from})`);
+	process.exit(0);
+}
+
+// ── 2. sibling checkout ──────────────────────────────────────────────────────
+const assetOnly = process.env.ANTHERS_WEB_SOURCE === "asset";
+const sibling = SIBLINGS.find((dir) => existsSync(join(dir, "apps", "web")));
+if (!assetOnly && sibling) {
+	console.log(`[web] building from the sibling checkout at ${sibling}`);
+	const build = Bun.spawnSync(["bun", "run", "build"], {
+		cwd: join(sibling, "apps", "web"),
+		stdout: "inherit",
+		stderr: "inherit",
+	});
+	if (build.exitCode !== 0) {
+		console.error("[web] the sibling build failed — fix it there, then run this again.");
+		process.exit(1);
+	}
+	await place(join(sibling, "apps", "web", "dist"), "built from the sibling checkout");
+	process.exit(0);
+}
+
+// ── 3. the pinned release asset ──────────────────────────────────────────────
+if (!pinned) {
+	console.error(
+		"[web] No web build available, and no release pinned.\n" +
+			"      Do one of:\n" +
+			`        • clone the platform beside this repo:  git clone https://github.com/anthers-inc/anthers.git ${SIBLINGS[0]}\n` +
+			"        • point at an existing build:           ANTHERS_WEB=/path/to/apps/web/dist\n" +
+			'        • pin a release in package.json:        "anthersWeb": "v<calver version>"',
+	);
+	process.exit(1);
+}
+
+const url = `https://github.com/anthers-inc/anthers/releases/download/${pinned}/web-dist.tar.gz`;
+console.log(`[web] downloading ${pinned} …`);
+const [tarRes, sigRes] = await Promise.all([fetch(url), fetch(`${url}.sig`)]);
+if (!tarRes.ok) {
+	console.error(
+		`[web] ${tarRes.status} fetching ${url}\n` +
+			"      Either that release has no web-dist.tar.gz asset, or the pin in package.json\n" +
+			"      names a release that does not exist.",
+	);
+	process.exit(1);
+}
+if (!sigRes.ok) {
+	console.error(
+		`[web] ${sigRes.status} fetching ${url}.sig\n` +
+			"      The release must carry web-dist.tar.gz.sig beside the archive. An unsigned build\n" +
+			"      is refused rather than installed — the signature is what ties the download to the\n" +
+			"      key CI holds, and the verifier (scripts/web-sig.ts) never relaxes on its absence.",
+	);
+	process.exit(1);
+}
+const tar = join(ROOT, ".web-dist.tar.gz");
+const tarBytes = Buffer.from(await tarRes.arrayBuffer());
+if (
+	!verifyWebDist(
+		tarBytes,
+		await sigRes.text(),
+		await readFile(join(import.meta.dir, "web-dist-signing.pub"), "utf8"),
+	)
+) {
+	rmSync(tar, { force: true });
+	console.error(
+		`[web] ${pinned}'s archive does not carry a signature this repository's pinned key verifies.\n` +
+			"      Refusing to install it. If the signing key was rotated, the new public half\n" +
+			"      arrives in an update to scripts/web-dist-signing.pub (and the verifier fails\n" +
+			"      closed in the meantime).",
+	);
+	process.exit(1);
+}
+console.log(`[web] signature verified`);
+rmSync(DEST, { recursive: true, force: true });
+mkdirSync(DEST, { recursive: true });
+await Bun.write(tar, tarBytes);
+const untar = Bun.spawnSync(["tar", "xzf", tar, "-C", DEST, "--strip-components=1"], {
+	stdout: "inherit",
+	stderr: "inherit",
+});
+rmSync(tar, { force: true });
+if (untar.exitCode !== 0) {
+	console.error("[web] could not unpack the downloaded archive.");
+	process.exit(1);
+}
+console.log(`[web] unpacked ${pinned} → ${DEST}`);

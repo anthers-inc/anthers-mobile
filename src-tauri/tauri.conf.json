@@ -1,0 +1,42 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "Anthers",
+	"version": "2026.10.0",
+	"identifier": "org.anthers.mobile",
+	"build": {
+		"beforeDevCommand": "bun run scripts/resolve-web.ts",
+		"devUrl": "http://10.0.2.2:3000",
+		"beforeBuildCommand": "bun run scripts/resolve-web.ts",
+		"frontendDist": "../web-dist"
+	},
+	"app": {
+		"windows": [
+			{
+				"label": "main",
+				"title": "Anthers",
+				"width": 400,
+				"height": 860,
+				"resizable": false
+			}
+		],
+		"security": {
+			"csp": null
+		}
+	},
+	"bundle": {
+		"active": true,
+		"publisher": "Anthers, Inc.",
+		"copyright": "Copyright (c) 2026 Anthers, Inc.",
+		"category": "Entertainment",
+		"shortDescription": "Anthers — the creative garden, in your hand",
+		"longDescription": "The Anthers app for Android and iOS — the whole platform in a native app, for readers and creators alike: browse, read, watch and play, publish and manage a catalog and posts. It is the Anthers experience you know from the web, not a separate tool.",
+		"licenseFile": "../LICENSE",
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		]
+	}
+}

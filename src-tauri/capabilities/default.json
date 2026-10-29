@@ -1,0 +1,7 @@
+{
+	"$schema": "../gen/schemas/mobile-schema.json",
+	"identifier": "default",
+	"description": "Base capability for the Anthers mobile window: core IPC only. There is no filesystem, shell or updater scope, and no plugin permissions — the webview has no native surface beyond the injected runtime.",
+	"windows": ["main"],
+	"permissions": ["core:default"]
+}
