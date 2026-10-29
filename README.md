@@ -69,12 +69,16 @@ export JAVA_HOME="$HOME/.local/jdk-21"
 export ANDROID_HOME="$HOME/Android/Sdk"
 export NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
 
-bun install
-bun run web                        # resolve the web app into ./web-dist
-bunx tauri android init            # only if src-tauri/gen/android is missing
-bunx tauri android dev             # run on a device or emulator
-bunx tauri android build --apk --debug --target aarch64
+make setup          # probe the toolchain, then bun install
+make dev            # resolve the web build, run on a device or emulator
+make build-debug    # a debug APK for aarch64 only — the fast loop
+make build          # a release APK for every ABI
 ```
+
+`make help` lists the rest: `check`, `lint`, `format`, `test`, `version`, `clean`. `make
+version` prints the three version fields and fails when they disagree, which is the only
+symptom a disagreement has — every tool reads its own copy and the build succeeds against
+whichever one it found.
 
 `android dev` and `android build` compile the Rust half for each target, so the first run of
 either is slow. `--target aarch64` builds one ABI instead of four and is what the first pass was
@@ -105,6 +109,7 @@ mobile work needs there.
 ## Layout
 
 ```
+Makefile             The front door: setup, web, dev, build, check, lint, test, clean
 src-tauri/
   src/lib.rs         The shell: the injected runtime, and the mobile entry point
   src/main.rs        The desktop binary that calls the same run(), for `cargo check`
