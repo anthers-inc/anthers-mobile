@@ -16,10 +16,21 @@ ANDROID := $(SRC)/gen/android
 TAURI := bunx tauri
 BUN := bun
 
-# The emulator and adb live under the SDK, not on PATH by default. `make setup` says so
-# when they are missing rather than letting a target fail deep in a Gradle log.
+# 🚨 **These default rather than trust the environment, and make exports them.**
+# They live in `~/.zshenv`, which a shell opened before that file changed has never read —
+# so `$(ANDROID_HOME)/platform-tools/adb` used to expand to `/platform-tools/adb` and every
+# target failed with a message about the wrong thing. `?=` keeps a value the environment
+# does supply, and the fallbacks are the conventional locations this machine installed to.
+ANDROID_HOME ?= $(HOME)/Android/Sdk
+JAVA_HOME ?= $(HOME)/.local/jdk-21
+NDK_HOME ?= $(ANDROID_HOME)/ndk/27.0.12077973
+export ANDROID_HOME JAVA_HOME NDK_HOME
+
+# Derived from the three above, so nothing below can be built out of an empty variable.
 EMULATOR := $(ANDROID_HOME)/emulator/emulator
 ADB := $(ANDROID_HOME)/platform-tools/adb
+SDKMANAGER := $(ANDROID_HOME)/cmdline-tools/latest/bin/sdkmanager
+AVDMANAGER := $(ANDROID_HOME)/cmdline-tools/latest/bin/avdmanager
 
 # The AVD `make dev` runs against. Override on the command line for a second device.
 AVD ?= anthers-pixel
@@ -31,6 +42,17 @@ GPU ?= auto
 # Where `android build` leaves its output. The universal directory is what `--apk`
 # produces; a per-ABI build lands beside it under the ABI's own name.
 APK_DIR := $(ANDROID)/app/build/outputs/apk/universal
+
+# `bunx tauri` resolves the CLI out of node_modules, so every target that runs it needs the
+# install to have happened. A file target is what makes that automatic and once-only — the
+# alternative was a `make setup` ritual that a fresh clone silently skipped.
+node_modules: package.json bun.lock
+	@$(BUN) install
+
+# One guard, so a missing SDK is one clear sentence instead of a path that resolves to `/`.
+require-sdk:
+	@test -d "$(ANDROID_HOME)" || (echo "No Android SDK at $(ANDROID_HOME) — set ANDROID_HOME. See the README's toolchain section."; exit 1)
+	@test -x "$(ADB)" || (echo "No adb at $(ADB) — ANDROID_HOME does not look like an SDK."; exit 1)
 
 .DEFAULT_GOAL := help
 
@@ -54,7 +76,7 @@ setup: ## Check Rust, Bun, the JDK, the SDK/NDK and the Rust targets, then bun i
 	done; \
 	if [ -n "$$missing" ]; then echo "  targets    MISSING — rustup target add$$missing"; exit 1; else echo "  targets    all four Android targets installed"; fi
 	@if [ -x "$(EMULATOR)" ]; then echo "  emulator   $(EMULATOR)"; else echo "  emulator   missing — sdkmanager --install emulator (only needed to run the app)"; fi
-	@if [ -x "$(EMULATOR)" ] && $(ANDROID_HOME)/cmdline-tools/latest/bin/avdmanager list avd 2>/dev/null | grep -q "Name: $(AVD)"; then \
+	@if [ -x "$(EMULATOR)" ] && $(AVDMANAGER) list avd 2>/dev/null | grep -q "Name: $(AVD)"; then \
 		echo "  avd        $(AVD)"; \
 	else \
 		echo "  avd        $(AVD) not created — see the README's emulator section"; \
@@ -76,7 +98,7 @@ init: ## Generate src-tauri/gen/android (only if it is missing)
 
 # ─── Run ───
 
-dev: web ## Run the app on a device or emulator
+dev: node_modules require-sdk web ## Run the app on a device or emulator
 	@test -d "$(ANDROID)" || (echo "src-tauri/gen/android is missing — run 'make init'"; exit 1)
 	@$(ADB) devices | grep -q "device$$" || echo "  ! Nothing is attached — run 'make emulator' first (or plug in a phone)."
 	@echo "Pointing the app at http://10.0.2.2:8000 — the emulator's alias for this machine."
@@ -88,9 +110,12 @@ dev: web ## Run the app on a device or emulator
 # A windowed boot is the default because a phone-sized surface is the thing being built.
 # `HEADLESS=1` drops the window, which is what a run with no display — an agent session,
 # CI — needs; the app still installs, runs and screenshots.
-emulator: ## Boot the AVD `make dev` runs against (HEADLESS=1 for no window)
-	@test -x "$(EMULATOR)" || (echo "The emulator package is missing — sdkmanager --install emulator"; exit 1)
-	@test -n "$(ANDROID_HOME)" || (echo "ANDROID_HOME is not set"; exit 1)
+emulator: require-sdk ## Boot the AVD `make dev` runs against (HEADLESS=1 for no window)
+	@test -x "$(EMULATOR)" || (echo "No emulator at $(EMULATOR) — $(SDKMANAGER) --install emulator"; exit 1)
+	@$(AVDMANAGER) list avd 2>/dev/null | grep -q "Name: $(AVD)" || (\
+		echo "The AVD $(AVD) does not exist. Create it once:"; \
+		echo "  $(AVDMANAGER) create avd -n $(AVD) -k \"system-images;android-35;google_apis;x86_64\" --device pixel_8"; \
+		exit 1)
 	@if [ -n "$$($(ADB) devices | awk '/^emulator-/{print $$1; exit}')" ]; then \
 		echo "An emulator is already running."; exit 0; \
 	fi
@@ -112,16 +137,16 @@ emulator-stop: ## Stop the emulator
 	done; true
 
 emulator-list: ## List the AVDs on this machine
-	@$(ANDROID_HOME)/cmdline-tools/latest/bin/avdmanager list avd 2>/dev/null | grep -E "^ +Name:" || echo "No AVDs — see the README for the avdmanager command."
+	@$(AVDMANAGER) list avd 2>/dev/null | grep -E "^ +Name:" || echo "No AVDs — see the README for the avdmanager command."
 
 # ─── Build ───
 
-build: web ## Build a release APK for every ABI
+build: node_modules require-sdk web ## Build a release APK for every ABI
 	@test -d "$(ANDROID)" || (echo "src-tauri/gen/android is missing — run 'make init'"; exit 1)
 	$(TAURI) android build --apk
 	@$(MAKE) --no-print-directory apk
 
-build-debug: web ## Build a debug APK for aarch64 only (the fast loop)
+build-debug: node_modules require-sdk web ## Build a debug APK for aarch64 only (the fast loop)
 	@test -d "$(ANDROID)" || (echo "src-tauri/gen/android is missing — run 'make init'"; exit 1)
 	$(TAURI) android build --apk --debug --target aarch64
 	@$(MAKE) --no-print-directory apk
