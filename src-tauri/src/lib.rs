@@ -75,11 +75,27 @@ pub fn run() {
 	let script = runtime_script(&api_base_url());
 
 	tauri::Builder::default()
+		// Registered before the runtime plugin so a link that launched the app is already
+		// available when the webview's script runs.
+		.plugin(tauri_plugin_deep_link::init())
 		.plugin(
 			tauri::plugin::Builder::<tauri::Wry>::new("anthers-runtime")
 				.js_init_script(script)
 				.build(),
 		)
+		.setup(|app| {
+			// A link that opens the app while it is running arrives here. Android writes
+			// this line to logcat, which is the only place a delivery can be observed
+			// without a person watching the screen — the sign-in flow reads the same event
+			// for its callback code.
+			use tauri_plugin_deep_link::DeepLinkExt;
+			app.deep_link().on_open_url(|event| {
+				for url in event.urls() {
+					eprintln!("[anthers] deep link: {url}");
+				}
+			});
+			Ok(())
+		})
 		.run(tauri::generate_context!())
 		.expect("error while running the Anthers mobile shell");
 }

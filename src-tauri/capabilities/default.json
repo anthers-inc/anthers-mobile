@@ -1,7 +1,13 @@
 {
 	"$schema": "../gen/schemas/mobile-schema.json",
 	"identifier": "default",
-	"description": "Base capability for the Anthers mobile window: core IPC only. There is no filesystem, shell or updater scope, and no plugin permissions — the webview has no native surface beyond the injected runtime.",
-	"windows": ["main"],
-	"permissions": ["core:default"]
+	"description": "Base capability for the Anthers mobile window: core IPC, the event channel the deep-link delivery rides, and reading the URL that opened the app. There is no filesystem, shell or updater scope — the webview has no native surface beyond the injected runtime and the link that launched it.",
+	"windows": [
+		"main"
+	],
+	"permissions": [
+		"core:default",
+		"core:event:default",
+		"deep-link:default"
+	]
 }
