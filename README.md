@@ -98,9 +98,14 @@ avdmanager create avd -n anthers-pixel -k "system-images;android-35;google_apis;
 
 A window is the default because a phone-shaped surface is the thing being built. `make emulator
 HEADLESS=1` boots without one, which is what a session with no display needs — the app still
-installs, runs and screenshots through `adb`. Rendering is `-gpu auto` so the emulator takes host
-acceleration where the session offers it and falls back to software where it does not; override
-with `GPU=swiftshader_indirect` if a session disagrees.
+installs, runs and screenshots through `adb`.
+
+Rendering is **software by default** (`GPU=swiftshader_indirect`). `auto` picked host rendering and
+crashed this machine's emulator seconds after a windowed boot, inside its own GL and Vulkan stack —
+a core dump with `libvulkan_lvp` and `libshadertranslator` loaded. The headless path had looked fine
+because `-no-window` never exercises host rendering. `GPU=host make emulator` tries hardware again.
+Every boot is a cold one (`-no-snapshot`), so a crash cannot leave a saved state that freezes the
+next start, and the emulator's stderr goes to `.emulator.log` rather than nowhere.
 
 `android dev` and `android build` compile the Rust half for each target, so the first run of
 either is slow. `--target aarch64` builds one ABI instead of four and is what the first pass was
