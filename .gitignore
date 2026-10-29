@@ -15,6 +15,10 @@ node_modules/
 /src-tauri/gen/android/build/
 /src-tauri/gen/android/app/build/
 /src-tauri/gen/android/local.properties
+# The release signing key. Its durable home is Bitwarden Secrets; the working copy exists
+# only long enough to sign a build, and CI writes it from repository secrets.
+/src-tauri/gen/android/keystore.properties
+/src-tauri/gen/android/keystore.jks
 /src-tauri/gen/apple/build/
 
 # The emulator's stderr, written by `make emulator`. A crash leaves its reason here.
