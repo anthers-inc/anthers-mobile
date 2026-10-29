@@ -34,10 +34,20 @@ AVDMANAGER := $(ANDROID_HOME)/cmdline-tools/latest/bin/avdmanager
 
 # The AVD `make dev` runs against. Override on the command line for a second device.
 AVD ?= anthers-pixel
-# `auto` lets the emulator pick host rendering when the session supports it and fall back
-# to software when it does not — which is what this laptop needs, its graphics being a
-# hybrid AMD/NVIDIA pair. Pin the value only if that choice proves wrong for a session.
-GPU ?= auto
+# 🚨 **`swiftshader_indirect`, not `auto`, and this is a fix rather than a preference.**
+# `auto` picked host rendering, loaded the machine's GL and Vulkan stack, and crashed the
+# emulator seconds after boot: a core dump with `libvulkan_lvp` and `libshadertranslator`
+# loaded, and a TLS/resolver recursion inside the crash handler itself. The headless path
+# had booted fine, which is why this looked solved — `-no-window` never exercises host
+# rendering, so only a windowed boot meets it. Software rendering costs frames, not
+# correctness, and a dev emulator that stays up beats one that is fast until it segfaults.
+# `GPU=host make emulator` tries hardware again; `GPU=auto` is the emulator's own choice.
+GPU ?= swiftshader_indirect
+
+# The emulator's own stderr. It used to go to /dev/null, which is how a crash arrived as
+# "it freezes and then crashes" with nothing to read; a crash now leaves a log beside the
+# checkout.
+EMULATOR_LOG ?= .emulator.log
 
 # Where `android build` leaves its output. The universal directory is what `--apk`
 # produces; a per-ABI build lands beside it under the ABI's own name.
@@ -120,14 +130,14 @@ emulator: require-sdk ## Boot the AVD `make dev` runs against (HEADLESS=1 for no
 		echo "An emulator is already running."; exit 0; \
 	fi
 	@$(ADB) start-server >/dev/null 2>&1 || true
-	@echo "Booting $(AVD)…"
-	@$(EMULATOR) -avd $(AVD) -gpu $(GPU) -no-audio -no-boot-anim $(if $(HEADLESS),-no-window) \
-		>/dev/null 2>&1 &
+	@echo "Booting $(AVD)… (stderr → $(EMULATOR_LOG))"
+	@$(EMULATOR) -avd $(AVD) -gpu $(GPU) -no-audio -no-boot-anim -no-snapshot \
+		$(if $(HEADLESS),-no-window) >$(EMULATOR_LOG) 2>&1 &
 	@$(ADB) wait-for-device
 	@echo "Waiting for Android to finish booting…"
 	@i=0; while [ "$$($(ADB) shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; do \
 		i=$$((i+1)); \
-		if [ $$i -gt 150 ]; then echo "Timed out after five minutes — check '$(EMULATOR) -avd $(AVD)' by hand."; exit 1; fi; \
+		if [ $$i -gt 150 ]; then echo "Timed out after five minutes — see $(EMULATOR_LOG) and try 'GPU=host make emulator' or 'make emulator-stop && make emulator'."; exit 1; fi; \
 		sleep 2; \
 	done; echo "Booted."
 

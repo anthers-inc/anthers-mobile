@@ -16,3 +16,6 @@ node_modules/
 /src-tauri/gen/android/app/build/
 /src-tauri/gen/android/local.properties
 /src-tauri/gen/apple/build/
+
+# The emulator's stderr, written by `make emulator`. A crash leaves its reason here.
+/.emulator.log
