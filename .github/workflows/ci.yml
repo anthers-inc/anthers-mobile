@@ -77,8 +77,16 @@ jobs:
       # no longer publish, so the job dies before it reaches anything of ours.
       - name: Install the Android SDK packages and the NDK
         run: |
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT" -path '*/cmdline-tools/*/bin/sdkmanager' -type f | sort | tail -1)"
+          echo "Using $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+          {
+            echo "ANDROID_HOME=$SDK_ROOT"
+            echo "NDK_HOME=$SDK_ROOT/ndk/27.0.12077973"
+            echo "PATH=$SDK_ROOT/platform-tools:$(dirname "$SDKMANAGER"):$PATH"
+          } >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
