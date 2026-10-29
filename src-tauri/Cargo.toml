@@ -1,0 +1,22 @@
+[package]
+name = "anthers-mobile"
+version = "2026.10.0"
+edition = "2021"
+description = "Anthers — the mobile app for the Anthers platform"
+authors = ["Anthers, Inc."]
+license = "Apache-2.0"
+
+[lib]
+# 🚨 Tauri's mobile targets link this crate as a library, and the three crate types are
+# all required: staticlib for iOS, cdylib for Android, rlib so the desktop binary beside
+# it (`src/main.rs`) can call `run()`. A mobile target refuses a binary-only crate.
+name = "anthers_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "^2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "^2.0.0", features = [] }
+# Only to quote the API origin correctly into the injected script.
+serde_json = "1.0"

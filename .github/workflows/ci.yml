@@ -1,0 +1,101 @@
+# The shell's gate: the pinned web build resolves and verifies, the Rust crate passes
+# fmt/clippy/test, and an Android APK is built on a real runner — because the machine a
+# developer works on often has no Android SDK at all, and the APK is the only proof the
+# mobile half compiles and links.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # resolve-web is dependency-free, so only the runner is needed here.
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # The crate still compiles for the host target (`cargo check`), which is what keeps
+      # `src/lib.rs` and `src/main.rs` honest without an Android SDK in the loop.
+      - name: Install the webview's Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # The clean checkout has no web-dist (gitignored, resolved in) and the crate embeds
+      # it at compile time, so this runs first. It is also the pin contract's live proof:
+      # it downloads the promoted release's signed dist and refuses it on any signature
+      # failure, on every pull request.
+      - name: Resolve the pinned web build
+        run: bun run web
+
+      - name: Format
+        run: cargo fmt --check
+        working-directory: src-tauri
+
+      - name: Lint
+        run: cargo clippy -- -D warnings
+        working-directory: src-tauri
+
+      - name: Test
+        run: cargo test
+        working-directory: src-tauri
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      # The NDK version is pinned to the one `src-tauri/gen/android` was generated
+      # against; a different one changes the linker and the APK it produces.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install the Android SDK packages and the NDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # `--target aarch64` builds one ABI rather than all four: it is the shape the first
+      # pass was verified with, and four ABIs of a debug Rust build is a lot of minutes for
+      # the same answer. A release builds every ABI.
+      - name: Build the APK
+        run: bunx tauri android build --apk --debug --target aarch64
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anthers-mobile-debug-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk
+          if-no-files-found: error
