@@ -20,3 +20,7 @@ tauri-build = { version = "^2.0.0", features = [] }
 tauri = { version = "^2.0.0", features = [] }
 # Only to quote the API origin correctly into the injected script.
 serde_json = "1.0"
+# Delivers `https://anthers.org/...` into the app once Android has verified the domain
+# against the association file the platform serves. Mobile registers deep links through
+# `tauri.conf.json` only — runtime registration is desktop-only.
+tauri-plugin-deep-link = "^2.0.0"
