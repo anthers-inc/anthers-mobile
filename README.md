@@ -75,10 +75,19 @@ export ANDROID_HOME="$HOME/Android/Sdk"
 export NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
 
 make setup          # probe the toolchain, then bun install
-make dev            # resolve the web build, run on a device or emulator
-make build-debug    # a debug APK for aarch64 only — the fast loop
+make run            # build the bundled app, install it, start it — needs nothing else
+make dev            # hot reload against the platform's dev server (see below)
+make build-debug    # the APK on its own, for aarch64
 make build          # a release APK for every ABI
 ```
+
+**There are two loops, and they differ in what has to be running.** `make run` bundles the
+pinned web build into the APK and installs it, so it works by itself — that is the loop for
+checking the shell, the emulator, or anything where the web app is not the thing being changed.
+`make dev` points the webview at this machine's `:3000` through the emulator's `10.0.2.2` alias,
+so **`make dev` in `~/Anthers/anthers` has to be running first**; the target says so and stops if
+nothing answers there. Both boot the emulator themselves, because Tauri's own dev runner would
+otherwise start one with the emulator's default GPU settings.
 
 `make help` lists the rest: `check`, `lint`, `format`, `test`, `version`, `clean`. `make
 version` prints the three version fields and fails when they disagree, which is the only
