@@ -1,0 +1,117 @@
+# The APK release workflow, separate from `ci.yml` for the same reason the desktop's is: a
+# packaging failure must not queue behind, or block, a code check. Cutting a release happens
+# on an explicit `v<calver>` tag; a `workflow_dispatch` run builds the same APK and attaches
+# it as a workflow artifact without touching any release, which is how the pipeline gets
+# proven before its first tag.
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      # The NDK version is pinned to the one `src-tauri/gen/android` was generated
+      # against; a different one changes the linker and the APK it produces.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install the Android SDK packages and the NDK
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT" -path '*/cmdline-tools/*/bin/sdkmanager' -type f | sort | tail -1)"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+          {
+            echo "ANDROID_HOME=$SDK_ROOT"
+            echo "NDK_HOME=$SDK_ROOT/ndk/27.0.12077973"
+            echo "PATH=$SDK_ROOT/platform-tools:$(dirname "$SDKMANAGER"):$PATH"
+          } >> "$GITHUB_ENV"
+
+      # A release ships every ABI: the APK that reaches a phone must install on the phone it
+      # happens to be, not on the one the developer happened to build for.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: bun install --frozen-lockfile
+
+      # 🚨 The key's durable home is Bitwarden Secrets; these repository secrets are the
+      # working copy the build reads, and `bundle.licenseFile`'s sibling rule applies — the
+      # file exists only for the length of the run.
+      - name: Configure signing
+        run: |
+          cd src-tauri/gen/android
+          printf 'keyAlias=%s\npassword=%s\nstoreFile=%s\n' \
+            "${{ secrets.ANDROID_KEY_ALIAS }}" \
+            "${{ secrets.ANDROID_KEY_PASSWORD }}" \
+            "$RUNNER_TEMP/keystore.jks" > keystore.properties
+          base64 -d > "$RUNNER_TEMP/keystore.jks" <<< "${{ secrets.ANDROID_KEY_BASE64 }}"
+          chmod 600 keystore.properties "$RUNNER_TEMP/keystore.jks"
+
+      # The release's name reads the version the three fields carry rather than the tag's
+      # text, so a tag and a version that disagree cannot name the release one number and
+      # the APK another. `make version` is the same check, run here where it can fail a build.
+      - name: Read the version
+        id: version
+        run: |
+          version="$(grep -m1 '"version"' package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')"
+          echo "version=${version}" >>"$GITHUB_OUTPUT"
+
+      - name: Build the APK
+        run: bunx tauri android build --apk
+
+      # An unsigned APK cannot be installed over itself and cannot be updated; publishing one
+      # would be worse than publishing nothing. This fails the run rather than trusting that
+      # the signing config was applied.
+      - name: Refuse an unsigned APK
+        run: |
+          apk="$(ls src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk)"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" >/dev/null \
+            || { echo "The release APK is not signed — keystore.properties did not reach Gradle."; exit 1; }
+          echo "Signed: $apk"
+
+      # A real tag push creates the draft; a dispatch run (`github.ref_name` would otherwise
+      # read `main`, and the desktop's first proof run created a draft release *named main*)
+      # leaves it as a workflow artifact instead, so the pipeline can be proven without
+      # publishing anything.
+      - name: Create the draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release create "$tag" \
+            --draft \
+            --title "Anthers Mobile ${tag#v}" \
+            --generate-notes \
+            src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+
+      - name: Attach the APK as a run artifact (dispatch runs only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: anthers-mobile-release-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          if-no-files-found: error

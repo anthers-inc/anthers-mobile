@@ -159,6 +159,24 @@ Two config paths resolve from different directories, and it fails late: `fronten
 `licenseFile` resolve from `src-tauri/`, while `beforeBuildCommand` runs from the app directory.
 `cargo check` invokes neither, so a broken path survives it.
 
+## Releasing
+
+```sh
+make version                                  # the three fields must agree
+git tag v2026.10.0 && git push origin v2026.10.0
+```
+
+The `release` workflow builds a signed APK for every ABI and opens a **draft** release named
+`Anthers Mobile <version>` with the APK attached. **Publishing the draft is the release** — until
+then nothing has been handed out. A `workflow_dispatch` run builds the same APK and attaches it
+as a run artifact without touching any release, which is how the pipeline is proven between tags.
+
+The signing key's durable home is Bitwarden Secrets in `Anthers Prod` — `ANTHERS_MOBILE_ANDROID_KEY_BASE64`,
+`…_KEY_ALIAS` and `…_KEY_PASSWORD` — with the working copy in this repository's `ANDROID_KEY_*`
+secrets for the workflow to read. Its certificate fingerprint is what an app link's
+`assetlinks.json` has to name. Losing the key means the installed base cannot be updated over:
+rotation is a new application ID or a Play upload key reset.
+
 ## Licensing
 
 Anthers is Apache-2.0 and `bundle.licenseFile` points at the repository `LICENSE`.
