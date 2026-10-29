@@ -7,7 +7,7 @@
 # POSIX shells only. Android builds are proven on Linux and iOS needs macOS, so a
 # PowerShell branch would be dead weight here.
 
-.PHONY: help setup web init dev emulator emulator-stop emulator-list build build-debug apk check lint format test clean version
+.PHONY: help setup web init dev run require-devserver emulator emulator-stop emulator-list build build-debug apk check lint format test clean version
 
 # ─── Paths ───
 
@@ -108,12 +108,39 @@ init: ## Generate src-tauri/gen/android (only if it is missing)
 
 # ─── Run ───
 
-dev: node_modules require-sdk web ## Run the app on a device or emulator
+# 🚨 **`emulator` is a prerequisite, not advice.** `tauri android dev` starts its own emulator
+# when no device is attached, and launches it with the emulator's defaults — which is how a
+# host-GPU renderer came back after this repository had pinned software, and crashed the
+# machine's emulator seconds later. Booting ours first is what keeps the pin; Tauri then finds
+# a device and builds into it.
+#
+# The dev server is the platform's: `devUrl` points the webview at this machine's :3000 through
+# the emulator's `10.0.2.2` alias, so `make dev` in `~/Anthers/anthers` has to be running. The
+# check is here because Tauri's own failure is a bare "Waiting for your frontend dev server to
+# start" that repeats until it is killed.
+dev: node_modules require-sdk require-devserver web emulator ## Run against the platform's dev server (needs `make dev` there)
 	@test -d "$(ANDROID)" || (echo "src-tauri/gen/android is missing — run 'make init'"; exit 1)
-	@$(ADB) devices | grep -q "device$$" || echo "  ! Nothing is attached — run 'make emulator' first (or plug in a phone)."
 	@echo "Pointing the app at http://10.0.2.2:8000 — the emulator's alias for this machine."
 	@echo "A physical device needs ANTHERS_API_BASE set to this machine's LAN address."
 	$(TAURI) android dev
+
+# A prerequisite rather than a line in the recipe, so a missing dev server stops the run before
+# the emulator has been booted for nothing.
+require-devserver:
+	@curl -sf -m 2 http://localhost:3000/ >/dev/null 2>&1 || ( \
+		echo "No dev server on localhost:3000."; \
+		echo "  Run 'make dev' in ~/Anthers/anthers, then run this again."; \
+		echo "  Or use 'make run' — the bundled build needs no dev server at all."; \
+		exit 1)
+
+# The self-contained loop: the pinned web build is bundled into the APK, so nothing has to be
+# running anywhere and the app is exactly what a release would carry. Slower to iterate than
+# `dev` — every change is a rebuild and a reinstall — but it is the loop that works alone.
+run: node_modules require-sdk build-debug emulator ## Install the bundled build on the emulator and start it
+	@echo "Installing…"
+	@$(ADB) install -r $(APK_DIR)/debug/*.apk
+	@$(ADB) shell am start -n org.anthers.mobile/.MainActivity >/dev/null
+	@echo "Started. The API is the compile-time one — ANTHERS_API_BASE to change it."
 
 # ─── Emulator ───
 
