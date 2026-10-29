@@ -7,7 +7,7 @@
 # POSIX shells only. Android builds are proven on Linux and iOS needs macOS, so a
 # PowerShell branch would be dead weight here.
 
-.PHONY: help setup web init dev build build-debug apk check lint format test clean version
+.PHONY: help setup web init dev emulator emulator-stop emulator-list build build-debug apk check lint format test clean version
 
 # ─── Paths ───
 
@@ -15,6 +15,18 @@ SRC := src-tauri
 ANDROID := $(SRC)/gen/android
 TAURI := bunx tauri
 BUN := bun
+
+# The emulator and adb live under the SDK, not on PATH by default. `make setup` says so
+# when they are missing rather than letting a target fail deep in a Gradle log.
+EMULATOR := $(ANDROID_HOME)/emulator/emulator
+ADB := $(ANDROID_HOME)/platform-tools/adb
+
+# The AVD `make dev` runs against. Override on the command line for a second device.
+AVD ?= anthers-pixel
+# `auto` lets the emulator pick host rendering when the session supports it and fall back
+# to software when it does not — which is what this laptop needs, its graphics being a
+# hybrid AMD/NVIDIA pair. Pin the value only if that choice proves wrong for a session.
+GPU ?= auto
 
 # Where `android build` leaves its output. The universal directory is what `--apk`
 # produces; a per-ABI build lands beside it under the ABI's own name.
@@ -41,6 +53,12 @@ setup: ## Check Rust, Bun, the JDK, the SDK/NDK and the Rust targets, then bun i
 		rustup target list --installed | grep -qx "$$t" || missing="$$missing $$t"; \
 	done; \
 	if [ -n "$$missing" ]; then echo "  targets    MISSING — rustup target add$$missing"; exit 1; else echo "  targets    all four Android targets installed"; fi
+	@if [ -x "$(EMULATOR)" ]; then echo "  emulator   $(EMULATOR)"; else echo "  emulator   missing — sdkmanager --install emulator (only needed to run the app)"; fi
+	@if [ -x "$(EMULATOR)" ] && $(ANDROID_HOME)/cmdline-tools/latest/bin/avdmanager list avd 2>/dev/null | grep -q "Name: $(AVD)"; then \
+		echo "  avd        $(AVD)"; \
+	else \
+		echo "  avd        $(AVD) not created — see the README's emulator section"; \
+	fi
 	@echo ""
 	@$(BUN) install
 
@@ -60,9 +78,41 @@ init: ## Generate src-tauri/gen/android (only if it is missing)
 
 dev: web ## Run the app on a device or emulator
 	@test -d "$(ANDROID)" || (echo "src-tauri/gen/android is missing — run 'make init'"; exit 1)
+	@$(ADB) devices | grep -q "device$$" || echo "  ! Nothing is attached — run 'make emulator' first (or plug in a phone)."
 	@echo "Pointing the app at http://10.0.2.2:8000 — the emulator's alias for this machine."
 	@echo "A physical device needs ANTHERS_API_BASE set to this machine's LAN address."
 	$(TAURI) android dev
+
+# ─── Emulator ───
+
+# A windowed boot is the default because a phone-sized surface is the thing being built.
+# `HEADLESS=1` drops the window, which is what a run with no display — an agent session,
+# CI — needs; the app still installs, runs and screenshots.
+emulator: ## Boot the AVD `make dev` runs against (HEADLESS=1 for no window)
+	@test -x "$(EMULATOR)" || (echo "The emulator package is missing — sdkmanager --install emulator"; exit 1)
+	@test -n "$(ANDROID_HOME)" || (echo "ANDROID_HOME is not set"; exit 1)
+	@if [ -n "$$($(ADB) devices | awk '/^emulator-/{print $$1; exit}')" ]; then \
+		echo "An emulator is already running."; exit 0; \
+	fi
+	@$(ADB) start-server >/dev/null 2>&1 || true
+	@echo "Booting $(AVD)…"
+	@$(EMULATOR) -avd $(AVD) -gpu $(GPU) -no-audio -no-boot-anim $(if $(HEADLESS),-no-window) \
+		>/dev/null 2>&1 &
+	@$(ADB) wait-for-device
+	@echo "Waiting for Android to finish booting…"
+	@i=0; while [ "$$($(ADB) shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; do \
+		i=$$((i+1)); \
+		if [ $$i -gt 150 ]; then echo "Timed out after five minutes — check '$(EMULATOR) -avd $(AVD)' by hand."; exit 1; fi; \
+		sleep 2; \
+	done; echo "Booted."
+
+emulator-stop: ## Stop the emulator
+	@for d in $$($(ADB) devices | awk '/^emulator-/{print $$1}'); do \
+		echo "Stopping $$d"; $(ADB) -s $$d emu kill >/dev/null 2>&1 || true; \
+	done; true
+
+emulator-list: ## List the AVDs on this machine
+	@$(ANDROID_HOME)/cmdline-tools/latest/bin/avdmanager list avd 2>/dev/null | grep -E "^ +Name:" || echo "No AVDs — see the README for the avdmanager command."
 
 # ─── Build ───
 

@@ -80,6 +80,23 @@ version` prints the three version fields and fails when they disagree, which is 
 symptom a disagreement has — every tool reads its own copy and the build succeeds against
 whichever one it found.
 
+### The emulator
+
+`make emulator` boots the AVD named `anthers-pixel` and waits until Android has finished
+starting; `make emulator-stop` shuts it down, and `make emulator-list` shows what exists. Create
+the AVD once, after the emulator package is installed:
+
+```sh
+sdkmanager --install "emulator" "system-images;android-35;google_apis;x86_64"
+avdmanager create avd -n anthers-pixel -k "system-images;android-35;google_apis;x86_64" --device pixel_8
+```
+
+A window is the default because a phone-shaped surface is the thing being built. `make emulator
+HEADLESS=1` boots without one, which is what a session with no display needs — the app still
+installs, runs and screenshots through `adb`. Rendering is `-gpu auto` so the emulator takes host
+acceleration where the session offers it and falls back to software where it does not; override
+with `GPU=swiftshader_indirect` if a session disagrees.
+
 `android dev` and `android build` compile the Rust half for each target, so the first run of
 either is slow. `--target aarch64` builds one ABI instead of four and is what the first pass was
 verified with; a release builds all of them.
@@ -109,7 +126,7 @@ mobile work needs there.
 ## Layout
 
 ```
-Makefile             The front door: setup, web, dev, build, check, lint, test, clean
+Makefile             The front door: setup, web, dev, emulator, build, check, lint, test
 src-tauri/
   src/lib.rs         The shell: the injected runtime, and the mobile entry point
   src/main.rs        The desktop binary that calls the same run(), for `cargo check`
