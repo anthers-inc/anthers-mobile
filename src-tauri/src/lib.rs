@@ -11,36 +11,35 @@
 //!
 //! `invoke` is unavailable to remote documents, so native capability would mean opening the
 //! IPC boundary to a page served over the internet — an XSS on the site would then reach the
-//! device. The SPA is bundled instead. The desktop shell settled this first; the README
-//! carries the reasoning.
+//! device. The SPA is bundled instead. The desktop shell settled this first.
 //!
 //! ## Why the webview needs the runtime injected
 //!
-//! A bundled webview serves from `http://tauri.localhost` on Android (and `tauri://localhost`
-//! on iOS), where the API origin cannot be sniffed from the document's own host and the
-//! `.anthers.org` session cookie is never sent. `apiBaseUrl()` in `@anthers/web-shared` reads
-//! `globalThis.__ANTHERS_DESKTOP__` for exactly this case, so the shell defines it before any
-//! app JS runs — the plugin's `js_init_script` is what guarantees that ordering, on every
-//! platform, without depending on when a window happens to exist.
+//! A bundled webview serves from `http://tauri.localhost` on Android, where the API origin
+//! cannot be sniffed from the document's own host and the `.anthers.org` session cookie is
+//! never sent. `apiBaseUrl()` in `@anthers/web-shared` reads `globalThis.__ANTHERS_NATIVE__`
+//! for exactly this case, so the shell defines it before any app JS runs — the plugin's
+//! `js_init_script` is what guarantees that ordering on every platform.
 //!
-//! ⚠️ **The seam is still named for the desktop, and this shell borrows it.** Renaming it to
-//! a platform-tagged runtime (`__ANTHERS_NATIVE__` carrying `platform: "android" | "ios" |
-//! "desktop"`) is a platform-repository change, and it is the first thing the mobile work
-//! needs there: until it lands, `isDesktop()` answers true inside this shell, so any
-//! desktop-only branch in the web app will run on a phone.
-//!
-//! ## What this first pass does not have
-//!
-//! No token and therefore no sign-in: `getToken()` returns null and the app browses what a
-//! signed-out reader sees. The keystore-held token, the system-browser handoff and verified
-//! app links are the lane's later milestones.
+//! ⚠️ **The token arrives a moment later than the shape does.** A stored session has to be
+//! read from the Android keystore, which is a blocking call that cannot run on the main
+//! thread, so `on_webview_ready` reads it on its own thread and evaluates `setToken` into the
+//! page. `getToken()` answers null until then; `apiFetch` re-roots per request, so the
+//! requests the app makes after its first paint carry the session.
+
+mod auth;
+mod keystore;
+
+use tauri::{Emitter, Manager};
+
+use auth::{PendingCode, PendingVerifier};
+use keystore::Keystore;
 
 /// The API origin this build talks to. Override at build time:
 /// `ANTHERS_API_BASE=https://staging.example.org bunx tauri android build`.
 ///
 /// Debug builds point at the Android emulator's host alias rather than `localhost`, which on
-/// a phone is the phone itself. A physical device needs the LAN address of the machine running
-/// `make dev`, passed through `ANTHERS_API_BASE`.
+/// a phone is the phone itself.
 fn api_base_url() -> String {
 	option_env!("ANTHERS_API_BASE")
 		.map(str::to_string)
@@ -53,7 +52,7 @@ fn api_base_url() -> String {
 		})
 }
 
-/// The runtime `apiBaseUrl()` reads, defined before any app JS in every webview.
+/// The shape `apiBaseUrl()` reads, defined before any app JS in every webview.
 ///
 /// `fetch` is deliberately not supplied, matching the desktop: `apiFetch()` then uses the
 /// webview's own, a non-credentialed cross-origin request carrying no cookie, which the API's
@@ -62,12 +61,52 @@ fn runtime_script(api_base: &str) -> String {
 	let base = serde_json::to_string(api_base).unwrap_or_else(|_| "\"\"".into());
 	format!(
 		r#"(() => {{
-	globalThis.__ANTHERS_DESKTOP__ = {{
+	let token = null;
+	globalThis.__ANTHERS_NATIVE__ = {{
+		platform: "android",
 		apiBaseUrl: {base},
-		getToken: () => null,
+		getToken: () => token,
+		setToken: (next) => {{ token = next; }},
 	}};
 }})();"#
 	)
+}
+
+/// Fill the token the webview will present, once the keystore has answered.
+///
+/// 🚨 **On its own thread, because the keystore call blocks.** It posts to the Android main
+/// looper and waits on a channel, so running it on the main thread deadlocks the app before
+/// its first frame. The `eval` is marshalled back to the main thread, which is where the
+/// webview lives.
+fn restore_session(webview: tauri::Webview<tauri::Wry>) {
+	let app = webview.app_handle().clone();
+	std::thread::spawn(move || {
+		let Some(store) = app.try_state::<Keystore>() else {
+			return;
+		};
+		#[cfg(all(target_os = "android", debug_assertions))]
+		eprintln!(
+			"[anthers] keystore selftest: {}",
+			if store.selftest() { "ok" } else { "FAILED" }
+		);
+		let token = store.read();
+		#[cfg(all(target_os = "android", debug_assertions))]
+		eprintln!(
+			"[anthers] stored session: {}",
+			if token.is_some() { "present" } else { "none" }
+		);
+		let Some(token) = token else {
+			return;
+		};
+		let script = match serde_json::to_string(&token) {
+			Ok(literal) => format!("globalThis.__ANTHERS_NATIVE__?.setToken({literal});"),
+			Err(_) => return,
+		};
+		let webview = webview.clone();
+		let _ = app.run_on_main_thread(move || {
+			let _ = webview.eval(&script);
+		});
+	});
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -75,6 +114,29 @@ pub fn run() {
 	let script = runtime_script(&api_base_url());
 
 	tauri::Builder::default()
+		// The keystore plugin registers the Kotlin side and keeps its handle. Nothing in the
+		// webview can reach it: only this process stores or clears a session.
+		.plugin(
+			tauri::plugin::Builder::<tauri::Wry>::new("anthers-keystore")
+				.setup(|app, api| {
+					#[cfg(target_os = "android")]
+					{
+						let handle =
+							api.register_android_plugin("org.anthers.mobile", "KeystorePlugin")?;
+						app.manage(Keystore(handle));
+					}
+					#[cfg(not(target_os = "android"))]
+					{
+						let _ = api;
+						app.manage(Keystore);
+					}
+					Ok(())
+				})
+				.on_webview_ready(restore_session)
+				.build(),
+		)
+		.plugin(tauri_plugin_opener::init())
+		.plugin(tauri_plugin_http::init())
 		// Registered before the runtime plugin so a link that launched the app is already
 		// available when the webview's script runs.
 		.plugin(tauri_plugin_deep_link::init())
@@ -84,18 +146,35 @@ pub fn run() {
 				.build(),
 		)
 		.setup(|app| {
-			// A link that opens the app while it is running arrives here. Android writes
-			// this line to logcat, which is the only place a delivery can be observed
-			// without a person watching the screen — the sign-in flow reads the same event
-			// for its callback code.
+			app.manage(PendingVerifier::default());
+			app.manage(PendingCode::default());
+
+			// A link that opens the app while it is running arrives here. The code is kept for
+			// the webview to pull on boot AND emitted, because the two cases are different: a
+			// cold start has no listener yet, a running app does.
 			use tauri_plugin_deep_link::DeepLinkExt;
-			app.deep_link().on_open_url(|event| {
+			let handle = app.handle().clone();
+			app.deep_link().on_open_url(move |event| {
 				for url in event.urls() {
-					eprintln!("[anthers] deep link: {url}");
+					let code = auth::callback_code(&url);
+					if let Some(code) = code {
+						if let Some(pending) = handle.try_state::<PendingCode>() {
+							pending.put(code.clone());
+						}
+						let _ = handle.emit("desktop-auth-code", code);
+					} else {
+						eprintln!("[anthers] deep link: {url}");
+					}
 				}
 			});
 			Ok(())
 		})
+		.invoke_handler(tauri::generate_handler![
+			auth::begin_sign_in,
+			auth::complete_sign_in,
+			auth::take_pending_code,
+			auth::sign_out
+		])
 		.run(tauri::generate_context!())
 		.expect("error while running the Anthers mobile shell");
 }
