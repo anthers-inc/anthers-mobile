@@ -44,7 +44,7 @@ that works:
 2. **A sibling `../anthers` (or `../Anthers`) checkout** — built on demand. The local-dev path.
 3. **The pinned release asset** — downloaded from the platform's releases. What CI and a clean
    machine use. The pin is `anthersWeb` in `package.json`, naming a promoted platform release tag
-   (`v2026.10.34`).
+   (`v2026.11.0`).
 
 Every pinned download is verified before it is installed against the Ed25519 key committed at
 `scripts/web-dist-signing.pub`, and fails closed. The signature ties a download to a key CI holds,
@@ -184,7 +184,7 @@ Two config paths resolve from different directories, and it fails late: `fronten
 
 ```sh
 make version                                  # the three fields must agree
-git tag v2026.10.0 && git push origin v2026.10.0
+git tag v2026.11.1 && git push origin v2026.11.1
 ```
 
 The `release` workflow builds a signed APK for every ABI and opens a **draft** release named
