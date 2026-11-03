@@ -12,6 +12,15 @@
 #   public *;
 #}
 
+# The safe-area bridge is reached only from the page (`addJavascriptInterface`), so R8 has
+# no Kotlin call to find and would strip it out of a release build with the rest of the
+# unreferenced code. The interface's methods are the whole contract; keep them and the
+# class that carries them.
+-keep class org.anthers.mobile.MainActivity$Bridge { *; }
+-keepclassmembers class org.anthers.mobile.MainActivity$Bridge {
+    @android.webkit.JavascriptInterface <methods>;
+}
+
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable
