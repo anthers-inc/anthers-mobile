@@ -57,19 +57,55 @@ fn api_base_url() -> String {
 /// `fetch` is deliberately not supplied, matching the desktop: `apiFetch()` then uses the
 /// webview's own, a non-credentialed cross-origin request carrying no cookie, which the API's
 /// origin allow-list admits (`http://tauri.localhost` is the same origin Windows produces).
+///
+/// It also carries the safe-area bridge. The Android WebView does not report the status bar
+/// or the navigation bar through `env(safe-area-inset-*)`; `MainActivity` measures the real
+/// window insets and exposes them on `__ANTHERS_INSETS__`, and this script is what turns the
+/// numbers into the four custom properties the web app's CSS reads. The pull on
+/// `DOMContentLoaded` is load-bearing: a native push can land while the document is still the
+/// blank one, and a page load discards whatever that document's style said.
 fn runtime_script(api_base: &str) -> String {
 	let base = serde_json::to_string(api_base).unwrap_or_else(|_| "\"\"".into());
-	format!(
-		r#"(() => {{
+	// `replace` rather than a `format!` string: the script's own braces would all need
+	// doubling, and a JS template literal is unreadable enough without that.
+	r#"(() => {
 	let token = null;
-	globalThis.__ANTHERS_NATIVE__ = {{
+	globalThis.__ANTHERS_NATIVE__ = {
 		platform: "android",
-		apiBaseUrl: {base},
+		apiBaseUrl: __API_BASE__,
 		getToken: () => token,
-		setToken: (next) => {{ token = next; }},
-	}};
-}})();"#
-	)
+		setToken: (next) => { token = next; },
+	};
+
+	const applyInsets = (payload) => {
+		const style = document.documentElement && document.documentElement.style;
+		if (!style) return;
+		let insets = payload;
+		if (!insets) {
+			const bridge = globalThis.__ANTHERS_INSETS__;
+			if (!bridge) return;
+			try {
+				insets = JSON.parse(bridge.get());
+			} catch {
+				return;
+			}
+		}
+		for (const edge of ["top", "right", "bottom", "left"]) {
+			const value = Number(insets[edge]);
+			if (Number.isFinite(value)) {
+				style.setProperty(`--anthers-inset-${edge}`, `${value}px`);
+			}
+		}
+	};
+	globalThis.__ANTHERS_APPLY_INSETS__ = applyInsets;
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", () => applyInsets());
+	} else {
+		applyInsets();
+	}
+	window.addEventListener("resize", () => applyInsets());
+})();"#
+		.replace("__API_BASE__", &base)
 }
 
 /// Fill the token the webview will present, once the keystore has answered.

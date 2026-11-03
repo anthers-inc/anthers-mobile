@@ -28,10 +28,12 @@ resolves from the pinned release with its signature checked, and
 `src-tauri/gen/android/app/build/outputs/apk/universal/debug/` holds a debug APK that embeds the
 whole web app.
 
-**What it does not have yet.** No sign-in: the injected runtime returns a null token, so the app
-browses what a signed-out reader sees. No deep links, no keystore token, no phone-specific
-layout — the bundled web app is the desktop layout at phone width. Those are the milestones on
-the Roadmap's Anthers Mobile lane.
+**What it has now.** Sign-in through the system browser with the token held in the Android
+keystore (`2026.11.0`), verified `anthers.org` app links that return the OAuth callback to the
+app, and the window-insets bridge that keeps the web chrome clear of the status bar, camera
+cutout and gesture bar. **No phone-specific layout yet**: the bundled web app is still the
+platform's desktop layout at phone width, which is the web client's work rather than the
+shell's.
 
 ## Getting the web app
 
@@ -129,18 +131,37 @@ needs the host's LAN address passed as `ANTHERS_API_BASE` at build time. Release
 
 A bundled webview on Android serves from `http://tauri.localhost`, where the API origin cannot be
 sniffed from the document's host and the `.anthers.org` session cookie is never sent. The shell
-defines `globalThis.__ANTHERS_DESKTOP__` before any app JS — the seam `apiBaseUrl()` in
-`@anthers/web-shared` already reads — through the plugin `js_init_script`, which runs on every
-platform without depending on when a window exists.
+defines `globalThis.__ANTHERS_NATIVE__` with `platform: "android"` before any app JS — the
+platform-tagged seam `apiBaseUrl()`, `isNative()` and `isDesktop()` read — through the plugin
+`js_init_script`, which runs on every platform without depending on when a window exists. The
+desktop carries the same shape with `platform: "desktop"`, which is what stops a phone from
+inheriting the desktop's home preference or its settings section.
 
 That origin is already admitted by the API's CORS and CSRF allow-lists, because Android produces
 the same origin Windows does. No platform change was needed for it.
 
-**The seam's name is debt.** It is named for the desktop and this shell borrows it, so
-`isDesktop()` answers true inside the app and any desktop-only branch in the web app runs on a
-phone. Renaming it to a platform-tagged runtime (`__ANTHERS_NATIVE__` carrying
-`platform: "android" | "ios" | "desktop"`) is a platform-repository change and the first thing the
-mobile work needs there.
+## Safe areas
+
+The app targets SDK 37 and calls `enableEdgeToEdge()`, and Android 15 and later enforce
+edge-to-edge anyway, so the WebView spans the whole screen — under the status bar, the
+navigation bar and any camera cutout. An Android WebView does not report the system bars through
+`env(safe-area-inset-*)`: until WebView 144 the values carry only the display cutout, and the
+status and navigation bars are invisible to CSS. `MainActivity` therefore measures
+`WindowInsetsCompat.Type.systemBars() or displayCutout()` and publishes the four edges in CSS
+pixels:
+
+- `__ANTHERS_INSETS__.get()` is the pull, read once on `DOMContentLoaded` by the injected init
+  script. That is the path that makes a cold start correct even when an earlier push landed in
+  the blank document and was discarded with it.
+- `__ANTHERS_APPLY_INSETS__(payload)` is the push, called when the insets change — rotation,
+  a switch between gesture and three-button navigation, and the first pass after layout.
+
+The web app turns those values into `--anthers-inset-top`, `--anthers-inset-bottom`,
+`--anthers-inset-left` and `--anthers-inset-right`; the shared safe-area utilities in
+`apps/web`'s `globals.css` read them, with `env(safe-area-inset-*)` as the fallback for iOS and
+for a WebView new enough to report the system bars itself. The topbar's strip, the side padding
+and the bottom padding belong to the web app's shell, not to any page, so every route gets the
+same safe frame.
 
 ## Layout
 
