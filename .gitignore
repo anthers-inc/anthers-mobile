@@ -7,6 +7,11 @@ node_modules/
 # Task worktrees live inside the checkout, as they do in every Anthers repository.
 /.worktrees/
 
+# Working files: the scratch a task makes for itself — screenshots, logs, the throwaway
+# script that produced them. Ignored so `git status` stays honest and `git worktree remove`
+# does not refuse a finished task.
+/.working/
+
 # Rust build output.
 /src-tauri/target/
 

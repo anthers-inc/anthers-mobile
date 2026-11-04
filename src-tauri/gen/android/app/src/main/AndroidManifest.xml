@@ -5,6 +5,17 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- 🚨 **Browser visibility, declared rather than assumed.** Android 11 and later filter
+         `queryIntentActivities` to what an app declares it needs to see, so without this the
+         sign-in's handoff found no browser at all and reported "No browser is installed".
+         `browser.rs` and `BrowserPlugin.kt` carry the rest of the story. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
     <application
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"

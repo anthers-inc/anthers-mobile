@@ -18,19 +18,48 @@
 //! `@anthers/web-shared`'s `desktop.ts` already invokes exactly those. Matching them is why
 //! the sign-in surface needed no change to run on a phone.
 
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, State};
-use tauri_plugin_opener::OpenerExt;
+use tauri::{AppHandle, Manager, State};
 
+use crate::browser::Browser;
 use crate::keystore::Keystore;
 
-/// The PKCE verifier for the enrolment in flight. One sign-in at a time; starting another
-/// replaces it.
-#[derive(Default)]
-pub struct PendingVerifier(Mutex<Option<String>>);
+/// Where the PKCE verifier for the sign-in in flight is kept.
+///
+/// 🚨 **On disk, not in memory, because the process is expected to die mid-flow.** The handoff
+/// sends the person to a browser, and Android is free to reclaim this app while they are there;
+/// a verifier that lived only in a `Mutex` was gone by the time the code came back, which is why
+/// a completed sign-in ended at "This sign-in didn't start here". The app's private data
+/// directory is the same place the session token's encrypted copy lives; this value is weaker
+/// than that one and worth less: it expires with the challenge it was minted for and is useless
+/// without the one-time code.
+fn verifier_file(app: &AppHandle) -> Result<PathBuf, String> {
+	app.path()
+		.app_data_dir()
+		.map(|dir| dir.join("sign-in-verifier"))
+		.map_err(|e| format!("Could not reach the app's data directory: {e}"))
+}
+
+fn remember_verifier(app: &AppHandle, verifier: &str) -> Result<(), String> {
+	let path = verifier_file(app)?;
+	if let Some(dir) = path.parent() {
+		std::fs::create_dir_all(dir).map_err(|e| format!("Could not keep the sign-in: {e}"))?;
+	}
+	std::fs::write(&path, verifier).map_err(|e| format!("Could not keep the sign-in: {e}"))
+}
+
+/// The verifier this app is waiting to redeem, consumed as it is read.
+fn take_verifier(app: &AppHandle) -> Option<String> {
+	let path = verifier_file(app).ok()?;
+	let value = std::fs::read_to_string(&path).ok()?;
+	let _ = std::fs::remove_file(&path);
+	let trimmed = value.trim().to_owned();
+	(!trimmed.is_empty()).then_some(trimmed)
+}
 
 /// A callback code that arrived before the webview was listening — the link that launched
 /// the app, most often. The webview pulls it once on boot.
@@ -120,7 +149,7 @@ async fn post_json(
 #[tauri::command]
 pub async fn begin_sign_in(
 	app: AppHandle,
-	pending: State<'_, PendingVerifier>,
+	browser: State<'_, Browser>,
 	handle: String,
 	label: String,
 ) -> Result<String, String> {
@@ -141,9 +170,7 @@ pub async fn begin_sign_in(
 
 	// Only keep the verifier once the server has accepted its challenge, so a failed start
 	// cannot leave a stale verifier a later callback would try to redeem.
-	if let Ok(mut slot) = pending.0.lock() {
-		*slot = Some(verifier);
-	}
+	remember_verifier(&app, &verifier)?;
 
 	// `redirect=mobile` is what tells the page to answer on the app link rather than on the
 	// desktop's custom scheme, and `handle` is what lets a browser with no Anthers session
@@ -153,14 +180,12 @@ pub async fn begin_sign_in(
 		"{}/desktop/authorize?challenge={challenge}&redirect=mobile&handle={handle}",
 		web_base_url()
 	);
-	// 🚨 **The handle's opener, never the module-level `tauri_plugin_opener::open_url`.** That
-	// free function is the plugin's desktop path (`open::that_detached`), so on Android it
-	// spawns a program the phone does not have and fails with `No such file or directory
-	// (os error 2)`, which is exactly what the sign-in card was reporting. The handle's method
-	// is `#[cfg(mobile)]`-split inside the plugin: on a phone it runs the plugin's `open`
-	// command, which starts an ACTION_VIEW intent in the system browser.
-	app.opener()
-		.open_url(&url, None::<&str>)
+	// 🚨 **`Browser`, never a plain `ACTION_VIEW`.** This app answers verified `anthers.org`
+	// links, so the authorize page it is handing over is a URL this app is a handler for: an
+	// ordinary view intent resolves back into it, the window stays put, and the person has to
+	// copy the link out by hand. `browser.rs` excludes this package before choosing.
+	browser
+		.open(&url)
 		.map_err(|e| format!("Could not open your browser: {e}"))?;
 	Ok(url)
 }
@@ -168,16 +193,12 @@ pub async fn begin_sign_in(
 /// Redeem a callback code for the session, and keep the session.
 #[tauri::command]
 pub async fn complete_sign_in(
-	pending: State<'_, PendingVerifier>,
+	app: AppHandle,
 	store: State<'_, Keystore>,
 	code: String,
 ) -> Result<SignInResult, String> {
-	let verifier = pending
-		.0
-		.lock()
-		.ok()
-		.and_then(|mut slot| slot.take())
-		.ok_or("This sign-in didn't start here. Try signing in again.")?;
+	let verifier =
+		take_verifier(&app).ok_or("This sign-in didn't start here. Try signing in again.")?;
 
 	let res = post_json(
 		&format!("{}/api/auth/desktop/exchange", api_base_url()),
