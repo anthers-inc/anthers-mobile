@@ -39,17 +39,34 @@ class BrowserPlugin(private val activity: Activity) : Plugin(activity) {
             val url = invoke.parseArgs(OpenArgs::class.java).url
             val view = Intent(Intent.ACTION_VIEW, url.toUri())
                 .addCategory(Intent.CATEGORY_BROWSABLE)
+
+            // The direct path: every visible handler for this URL except this app. It is empty
+            // either when no browser is installed or, more often, when Android's package
+            // visibility hides them from us — the `<queries>` block in the manifest is what
+            // makes them visible, and a query that disagrees with it by so much as a category
+            // comes back empty on a phone that has three browsers.
             val browsers = activity.packageManager
                 .queryIntentActivities(view, PackageManager.MATCH_DEFAULT_ONLY)
                 .map { it.activityInfo.packageName }
                 .filter { it != activity.packageName }
                 .distinct()
-            val target = browsers.firstOrNull()
-                ?: throw IllegalStateException("No browser is installed to open the sign-in.")
 
-            view.setPackage(target)
-            view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            activity.applicationContext.startActivity(view)
+            if (browsers.isNotEmpty()) {
+                view.setPackage(browsers.first())
+                view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                activity.applicationContext.startActivity(view)
+                invoke.resolve()
+                return
+            }
+
+            // 🚨 **The fallback is a chooser, not an error.** The system resolves a chooser
+            // itself, so it needs no visibility of its own, and excluding this activity keeps
+            // the app from being one of the answers — which is the whole point of opening a
+            // URL it is a verified handler for.
+            val chooser = Intent.createChooser(view, null)
+            chooser.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(activity.componentName))
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.applicationContext.startActivity(chooser)
             invoke.resolve()
         } catch (ex: Exception) {
             invoke.reject(ex.message)
