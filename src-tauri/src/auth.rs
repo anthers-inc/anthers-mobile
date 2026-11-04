@@ -224,6 +224,7 @@ pub async fn begin_sign_in(
 
 /// Trade a one-time code and its verifier for a session, and keep the session.
 async fn exchange_session(
+	app: &AppHandle,
 	store: &Keystore,
 	code: &str,
 	verifier: &str,
@@ -250,6 +251,18 @@ async fn exchange_session(
 
 	store.write(token)?;
 
+	// 🚨 **Reload the page into its signed-in self, rather than asking it to notice.** The
+	// exchange usually finishes while the browser still owns the screen, and Android freezes a
+	// backgrounded WebView: a React state update or a promise continuation queued there may
+	// never run, which is how a session that existed on the server and in the keystore still
+	// showed as a signed-out app. A reload is not a hint. It runs when the page next has a
+	// thread, and the fresh page pulls this token on boot (`session_token`).
+	if let Some(window) = app.get_webview_window("main") {
+		let _ = app.run_on_main_thread(move || {
+			let _ = window.eval("window.location.reload()");
+		});
+	}
+
 	Ok(SignInResult {
 		token: token.to_string(),
 		persistence: Persistence::Keychain,
@@ -265,7 +278,7 @@ pub async fn complete_sign_in(
 ) -> Result<SignInResult, String> {
 	let pending =
 		read_pending(&app).ok_or("This sign-in didn't start here. Try signing in again.")?;
-	let result = exchange_session(&store, &code, &pending.verifier).await?;
+	let result = exchange_session(&app, &store, &code, &pending.verifier).await?;
 	forget_pending(&app);
 	Ok(result)
 }
@@ -306,7 +319,7 @@ pub async fn await_sign_in(
 				let body: serde_json::Value = serde_json::from_str(&text)
 					.map_err(|e| format!("Unexpected reply from Anthers: {e}"))?;
 				if let Some(code) = body.get("code").and_then(|code| code.as_str()) {
-					let result = exchange_session(&store, code, &pending.verifier).await?;
+					let result = exchange_session(&app, &store, code, &pending.verifier).await?;
 					forget_pending(&app);
 					return Ok(result);
 				}
