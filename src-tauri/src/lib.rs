@@ -229,6 +229,8 @@ pub fn run() {
 		})
 		.invoke_handler(tauri::generate_handler![
 			auth::begin_sign_in,
+			auth::await_sign_in,
+			auth::has_pending_sign_in,
 			auth::complete_sign_in,
 			auth::take_pending_code,
 			auth::sign_out

@@ -28,6 +28,7 @@ tauri-plugin-deep-link = "^2.0.0"
 # webview: a password typed here would be a second host asking for a credential it is not
 # the authority on.
 tauri-plugin-opener = "^2.0.0"
+tokio = { version = "1", features = ["time"] }
 # The two pre-auth calls, posted from Rust so they never depend on the webview's CORS.
 tauri-plugin-http = "^2.0.0"
 # PKCE: a random verifier and the SHA-256 challenge derived from it.

@@ -28,37 +28,55 @@ use tauri::{AppHandle, Manager, State};
 use crate::browser::Browser;
 use crate::keystore::Keystore;
 
-/// Where the PKCE verifier for the sign-in in flight is kept.
+/// What the shell needs to finish a sign-in it started: the verifier it must prove, and the
+/// challenge the server knows the enrollment by.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Pending {
+	verifier: String,
+	challenge: String,
+}
+
+/// Where the sign-in in flight is kept.
 ///
 /// 🚨 **On disk, not in memory, because the process is expected to die mid-flow.** The handoff
 /// sends the person to a browser, and Android is free to reclaim this app while they are there;
-/// a verifier that lived only in a `Mutex` was gone by the time the code came back, which is why
-/// a completed sign-in ended at "This sign-in didn't start here". The app's private data
-/// directory is the same place the session token's encrypted copy lives; this value is weaker
-/// than that one and worth less: it expires with the challenge it was minted for and is useless
-/// without the one-time code.
-fn verifier_file(app: &AppHandle) -> Result<PathBuf, String> {
+/// state that lived only in a `Mutex` was gone by the time the sign-in finished, which is why a
+/// completed sign-in ended at "This sign-in didn't start here". The app's private data directory
+/// is the same place the session token's encrypted copy lives; this value is weaker than that
+/// one and worth less: it expires with the challenge and is useless without the code.
+fn pending_file(app: &AppHandle) -> Result<PathBuf, String> {
 	app.path()
 		.app_data_dir()
-		.map(|dir| dir.join("sign-in-verifier"))
+		.map(|dir| dir.join("sign-in-pending.json"))
 		.map_err(|e| format!("Could not reach the app's data directory: {e}"))
 }
 
-fn remember_verifier(app: &AppHandle, verifier: &str) -> Result<(), String> {
-	let path = verifier_file(app)?;
+fn remember_pending(app: &AppHandle, pending: &Pending) -> Result<(), String> {
+	let path = pending_file(app)?;
 	if let Some(dir) = path.parent() {
 		std::fs::create_dir_all(dir).map_err(|e| format!("Could not keep the sign-in: {e}"))?;
 	}
-	std::fs::write(&path, verifier).map_err(|e| format!("Could not keep the sign-in: {e}"))
+	let body =
+		serde_json::to_string(pending).map_err(|e| format!("Could not keep the sign-in: {e}"))?;
+	std::fs::write(&path, body).map_err(|e| format!("Could not keep the sign-in: {e}"))
 }
 
-/// The verifier this app is waiting to redeem, consumed as it is read.
-fn take_verifier(app: &AppHandle) -> Option<String> {
-	let path = verifier_file(app).ok()?;
-	let value = std::fs::read_to_string(&path).ok()?;
-	let _ = std::fs::remove_file(&path);
-	let trimmed = value.trim().to_owned();
-	(!trimmed.is_empty()).then_some(trimmed)
+/// What this app is waiting to redeem, read without consuming it, so a poll can retry.
+fn read_pending(app: &AppHandle) -> Option<Pending> {
+	let path = pending_file(app).ok()?;
+	let body = std::fs::read_to_string(&path).ok()?;
+	serde_json::from_str(&body).ok()
+}
+
+/// Forget the sign-in, once its code has been redeemed.
+///
+/// ⚠️ **Called after a successful exchange, never before it.** Dropping the record first would
+/// make a transient network failure at the exchange unrecoverable — the person would be signed
+/// in at their identity server and have to start the whole ceremony again.
+fn forget_pending(app: &AppHandle) {
+	if let Ok(path) = pending_file(app) {
+		let _ = std::fs::remove_file(path);
+	}
 }
 
 /// A callback code that arrived before the webview was listening — the link that launched
@@ -143,6 +161,14 @@ async fn post_json(
 		.map_err(|e| format!("Could not reach Anthers: {e}"))
 }
 
+async fn get_json(url: &str) -> Result<tauri_plugin_http::reqwest::Response, String> {
+	tauri_plugin_http::reqwest::Client::new()
+		.get(url)
+		.send()
+		.await
+		.map_err(|e| format!("Could not reach Anthers: {e}"))
+}
+
 /// Mint a PKCE challenge, register it with the server, and open the authorize page in the
 /// system browser. Returns the opened URL so the UI can offer it as copyable text — a button
 /// that silently does nothing on a device with no browser handler is a dead end.
@@ -168,9 +194,15 @@ pub async fn begin_sign_in(
 		));
 	}
 
-	// Only keep the verifier once the server has accepted its challenge, so a failed start
-	// cannot leave a stale verifier a later callback would try to redeem.
-	remember_verifier(&app, &verifier)?;
+	// Only keep the sign-in once the server has accepted its challenge, so a failed start
+	// cannot leave a stale verifier a later redemption would try to spend.
+	remember_pending(
+		&app,
+		&Pending {
+			verifier: verifier.clone(),
+			challenge: challenge.clone(),
+		},
+	)?;
 
 	// `redirect=mobile` is what tells the page to answer on the app link rather than on the
 	// desktop's custom scheme, and `handle` is what lets a browser with no Anthers session
@@ -190,23 +222,19 @@ pub async fn begin_sign_in(
 	Ok(url)
 }
 
-/// Redeem a callback code for the session, and keep the session.
-#[tauri::command]
-pub async fn complete_sign_in(
-	app: AppHandle,
-	store: State<'_, Keystore>,
-	code: String,
+/// Trade a one-time code and its verifier for a session, and keep the session.
+async fn exchange_session(
+	store: &Keystore,
+	code: &str,
+	verifier: &str,
 ) -> Result<SignInResult, String> {
-	let verifier =
-		take_verifier(&app).ok_or("This sign-in didn't start here. Try signing in again.")?;
-
 	let res = post_json(
 		&format!("{}/api/auth/desktop/exchange", api_base_url()),
 		&serde_json::json!({ "code": code, "verifier": verifier }),
 	)
 	.await?;
 	if !res.status().is_success() {
-		return Err("That sign-in link is no longer valid. Try again.".into());
+		return Err("That sign-in is no longer valid. Try again.".into());
 	}
 
 	let text = res
@@ -226,6 +254,76 @@ pub async fn complete_sign_in(
 		token: token.to_string(),
 		persistence: Persistence::Keychain,
 	})
+}
+
+/// Redeem a callback code for the session, and keep the session.
+#[tauri::command]
+pub async fn complete_sign_in(
+	app: AppHandle,
+	store: State<'_, Keystore>,
+	code: String,
+) -> Result<SignInResult, String> {
+	let pending =
+		read_pending(&app).ok_or("This sign-in didn't start here. Try signing in again.")?;
+	let result = exchange_session(&store, &code, &pending.verifier).await?;
+	forget_pending(&app);
+	Ok(result)
+}
+
+/// Wait for the enrollment to be approved, then redeem it.
+///
+/// 🚨 **The server is asked, rather than waited on.** The alternative — a one-time code handed
+/// back over a verified `anthers.org` app link — needs a browser that hands off and a process
+/// Android has not reclaimed, and one failure among those leaves the person signed in on the
+/// web and signed out in the app with nothing to retry. Polling the challenge this app itself
+/// registered makes the browser only the place a password is typed.
+#[tauri::command]
+pub async fn await_sign_in(
+	app: AppHandle,
+	store: State<'_, Keystore>,
+) -> Result<SignInResult, String> {
+	let pending =
+		read_pending(&app).ok_or("This sign-in didn't start here. Try signing in again.")?;
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10 * 60);
+	loop {
+		if std::time::Instant::now() >= deadline {
+			return Err("That sign-in took too long. Start it again from this screen.".into());
+		}
+		match get_json(&format!(
+			"{}/api/auth/desktop/poll/{}",
+			api_base_url(),
+			pending.challenge
+		))
+		.await
+		{
+			// 202: the browser leg has not been approved yet. Anything else is an answer.
+			Ok(res) if res.status().as_u16() == 202 => {}
+			Ok(res) if res.status().is_success() => {
+				let text = res
+					.text()
+					.await
+					.map_err(|e| format!("Unexpected reply from Anthers: {e}"))?;
+				let body: serde_json::Value = serde_json::from_str(&text)
+					.map_err(|e| format!("Unexpected reply from Anthers: {e}"))?;
+				if let Some(code) = body.get("code").and_then(|code| code.as_str()) {
+					let result = exchange_session(&store, code, &pending.verifier).await?;
+					forget_pending(&app);
+					return Ok(result);
+				}
+			}
+			// A challenge the server no longer holds: it expired, or another path redeemed it.
+			Ok(_) => return Err("That sign-in expired. Start it again from this screen.".into()),
+			// A network blip is not an answer; keep asking until the deadline.
+			Err(_) => {}
+		}
+		tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+	}
+}
+
+/// Whether a sign-in is still waiting to be redeemed, so a launch can resume waiting for it.
+#[tauri::command]
+pub fn has_pending_sign_in(app: AppHandle) -> bool {
+	read_pending(&app).is_some()
 }
 
 /// A code that arrived before the webview could listen, taken once.
