@@ -22,7 +22,8 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::keystore::Keystore;
 
@@ -118,6 +119,7 @@ async fn post_json(
 /// that silently does nothing on a device with no browser handler is a dead end.
 #[tauri::command]
 pub async fn begin_sign_in(
+	app: AppHandle,
 	pending: State<'_, PendingVerifier>,
 	label: String,
 ) -> Result<String, String> {
@@ -148,7 +150,14 @@ pub async fn begin_sign_in(
 		"{}/desktop/authorize?challenge={challenge}&redirect=mobile",
 		web_base_url()
 	);
-	tauri_plugin_opener::open_url(&url, None::<&str>)
+	// 🚨 **The handle's opener, never the module-level `tauri_plugin_opener::open_url`.** That
+	// free function is the plugin's desktop path (`open::that_detached`), so on Android it
+	// spawns a program the phone does not have and fails with `No such file or directory
+	// (os error 2)`, which is exactly what the sign-in card was reporting. The handle's method
+	// is `#[cfg(mobile)]`-split inside the plugin: on a phone it runs the plugin's `open`
+	// command, which starts an ACTION_VIEW intent in the system browser.
+	app.opener()
+		.open_url(&url, None::<&str>)
 		.map_err(|e| format!("Could not open your browser: {e}"))?;
 	Ok(url)
 }
