@@ -121,6 +121,7 @@ async fn post_json(
 pub async fn begin_sign_in(
 	app: AppHandle,
 	pending: State<'_, PendingVerifier>,
+	handle: String,
 	label: String,
 ) -> Result<String, String> {
 	let verifier = random_hex();
@@ -145,9 +146,11 @@ pub async fn begin_sign_in(
 	}
 
 	// `redirect=mobile` is what tells the page to answer on the app link rather than on the
-	// desktop's custom scheme. See `DesktopAuthorizePage` in the platform repository.
+	// desktop's custom scheme, and `handle` is what lets a browser with no Anthers session
+	// start the OAuth at the person's own identity server instead of bouncing to `/login`.
+	// See `DesktopAuthorizePage` in the platform repository.
 	let url = format!(
-		"{}/desktop/authorize?challenge={challenge}&redirect=mobile",
+		"{}/desktop/authorize?challenge={challenge}&redirect=mobile&handle={handle}",
 		web_base_url()
 	);
 	// 🚨 **The handle's opener, never the module-level `tauri_plugin_opener::open_url`.** That
