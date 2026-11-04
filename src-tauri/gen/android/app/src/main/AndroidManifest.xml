@@ -12,6 +12,11 @@
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />
+            <!-- The category is not decoration: Android's package-visibility match compares the
+                 whole intent, so a query that adds `CATEGORY_BROWSABLE` matches nothing unless
+                 the declaration carries it too — which is how a phone with Chrome installed
+                 still reported that no browser existed. -->
+            <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" />
         </intent>
     </queries>
