@@ -1,9 +1,9 @@
 {
 	"name": "anthers-mobile",
 	"private": true,
-	"version": "2026.11.12",
+	"version": "2026.11.13",
 	"license": "Apache-2.0",
-	"anthersWeb": "v2026.11.5",
+	"anthersWeb": "v2026.11.6",
 	"description": "Anthers — the Tauri shell that carries the whole Anthers web app to Android and iOS",
 	"type": "module",
 	"comment": "The web app is not a dependency here — it is a BUILD ARTIFACT resolved into ./web-dist by scripts/resolve-web.ts, the same three sources and the same signature check the desktop shell uses. See that file.",
