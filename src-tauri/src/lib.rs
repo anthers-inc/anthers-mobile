@@ -72,11 +72,24 @@ fn runtime_script(api_base: &str) -> String {
 	// doubling, and a JS template literal is unreadable enough without that.
 	r#"(() => {
 	let token = null;
+	// 🚨 **The page waits for this before its first "who am I" request.** The keystore read
+	// blocks, so it happens on a worker and the answer arrives after the page has booted;
+	// without a promise to wait on, the first request goes out without the token and the app
+	// concludes it is signed out — with a perfectly good session in hand.
+	let settleToken;
+	const tokenReady = new Promise((resolve) => { settleToken = resolve; });
 	globalThis.__ANTHERS_NATIVE__ = {
 		platform: "android",
 		apiBaseUrl: __API_BASE__,
 		getToken: () => token,
-		setToken: (next) => { token = next; },
+		setToken: (next) => {
+			token = next;
+			if (settleToken) {
+				settleToken();
+				settleToken = undefined;
+			}
+		},
+		whenTokenReady: () => tokenReady,
 	};
 
 	const applyInsets = (payload) => {
@@ -133,12 +146,12 @@ fn restore_session(webview: tauri::Webview<tauri::Wry>) {
 			"[anthers] stored session: {}",
 			if token.is_some() { "present" } else { "none" }
 		);
-		let Some(token) = token else {
-			return;
-		};
-		let script = match serde_json::to_string(&token) {
-			Ok(literal) => format!("globalThis.__ANTHERS_NATIVE__?.setToken({literal});"),
-			Err(_) => return,
+		// 🚨 **Answer even when there is no token.** The page is waiting on this to decide
+		// whether it is signed out; staying silent would leave it on a spinner forever. A null
+		// token settles the same promise and says, plainly, "nobody is signed in here".
+		let script = match token.as_deref().map(serde_json::to_string) {
+			Some(Ok(literal)) => format!("globalThis.__ANTHERS_NATIVE__?.setToken({literal});"),
+			_ => "globalThis.__ANTHERS_NATIVE__?.setToken(null);".to_string(),
 		};
 		let webview = webview.clone();
 		let _ = app.run_on_main_thread(move || {
@@ -245,6 +258,7 @@ pub fn run() {
 			auth::begin_sign_in,
 			auth::await_sign_in,
 			auth::has_pending_sign_in,
+			auth::session_token,
 			auth::complete_sign_in,
 			auth::take_pending_code,
 			auth::sign_out
