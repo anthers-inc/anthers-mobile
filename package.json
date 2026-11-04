@@ -1,7 +1,7 @@
 {
 	"name": "anthers-mobile",
 	"private": true,
-	"version": "2026.11.8",
+	"version": "2026.11.9",
 	"license": "Apache-2.0",
 	"anthersWeb": "v2026.11.3",
 	"description": "Anthers — the Tauri shell that carries the whole Anthers web app to Android and iOS",
