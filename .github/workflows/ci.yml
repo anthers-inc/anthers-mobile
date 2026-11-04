@@ -22,6 +22,16 @@ jobs:
       # resolve-web is dependency-free, so only the runner is needed here.
       - uses: oven-sh/setup-bun@v2
 
+      # The scripts' suite and the version agreement check need nothing but Bun, so they run
+      # before the Rust toolchain is even installed: a release whose four fields disagree is
+      # the failure a green build would otherwise hide, because each tool reads its own copy
+      # and none of them compares.
+      - name: Test the shell's scripts
+        run: bun test scripts/
+
+      - name: Hold the four version fields together
+        run: bun run scripts/promote-version.ts --check
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
