@@ -210,18 +210,32 @@ pub fn run() {
 			// A link that opens the app while it is running arrives here. The code is kept for
 			// the webview to pull on boot AND emitted, because the two cases are different: a
 			// cold start has no listener yet, a running app does.
+			// 🚨 **The phone opens the app on the callback link and then ignores the code in it.**
+			// A one-time code is burned by the first redemption attempt against it, wrong
+			// verifier or not, and the phone has two redeemers: the link this event carries, and
+			// the poll the sign-in screen runs. The poll is the one that works — it survives a
+			// browser that never hands off and a process Android reclaimed — so on Android the
+			// link's only job is to bring the app forward, and the poll finishes the sign-in.
+			// The desktop has no poll and keeps redeeming from its `anthers://` link.
 			use tauri_plugin_deep_link::DeepLinkExt;
 			let handle = app.handle().clone();
 			app.deep_link().on_open_url(move |event| {
 				for url in event.urls() {
-					let code = auth::callback_code(&url);
-					if let Some(code) = code {
-						if let Some(pending) = handle.try_state::<PendingCode>() {
-							pending.put(code.clone());
+					#[cfg(target_os = "android")]
+					{
+						eprintln!("[anthers] sign-in callback opened the app: {url}");
+					}
+					#[cfg(not(target_os = "android"))]
+					{
+						let code = auth::callback_code(&url);
+						if let Some(code) = code {
+							if let Some(pending) = handle.try_state::<PendingCode>() {
+								pending.put(code.clone());
+							}
+							let _ = handle.emit("desktop-auth-code", code);
+						} else {
+							eprintln!("[anthers] deep link: {url}");
 						}
-						let _ = handle.emit("desktop-auth-code", code);
-					} else {
-						eprintln!("[anthers] deep link: {url}");
 					}
 				}
 			});
