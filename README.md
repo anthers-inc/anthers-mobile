@@ -163,6 +163,30 @@ for a WebView new enough to report the system bars itself. The topbar's strip, t
 and the bottom padding belong to the web app's shell, not to any page, so every route gets the
 same safe frame.
 
+## Signing in
+
+The shell never asks for a password. `/api/auth/desktop/start` registers a PKCE challenge,
+the system browser opens `/desktop/authorize?challenge=…&redirect=mobile&handle=…`, and the
+person authenticates at whichever server holds their handle. That page returns a one-time
+code over `https://anthers.org/auth/callback`, which the shell redeems for a session token it
+keeps in the Android keystore. The sign-in screen asks for the handle first, exactly as
+`/login` does, because a phone browser usually has no Anthers session of its own.
+
+Two things about that handoff are load-bearing and easy to undo:
+
+- 🚨 **The browser is chosen with this app excluded.** The shell verifies `anthers.org` app
+  links so the callback can return to it, which also makes it a handler for the authorize
+  page it is handing over. A plain `ACTION_VIEW` resolves back into this app, whose activity
+  is `singleTask`, so the window sits still and the handoff does nothing with no error to
+  show. `BrowserPlugin.kt` asks for the URL's handlers, drops this package, and targets the
+  browser; the manifest's `<queries>` block is what lets Android 11 and later see browsers at
+  all. The block survives `tauri android build` because only the deep-link intent filter is
+  regenerated.
+- 🚨 **The PKCE verifier is on disk, not in memory.** Android reclaims this app while the
+  person is in the browser, so a verifier that lived in a `Mutex` was gone when the code came
+  back and every completed sign-in ended at "This sign-in didn't start here". It is written to
+  the app's private data directory when the challenge is accepted and consumed on redemption.
+
 ## Layout
 
 ```
