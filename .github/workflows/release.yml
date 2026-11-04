@@ -92,6 +92,28 @@ jobs:
             || { echo "The release APK is not signed — keystore.properties did not reach Gradle."; exit 1; }
           echo "Signed: $apk"
 
+      # 🚨 **The asset's public name.** Gradle calls its output `app-universal-release.apk`,
+      # which names a build directory rather than the app and is identical in every release,
+      # so two downloads in one folder are indistinguishable. The desktop's artifacts read
+      # `Anthers_<version>_<arch>.deb`; this is that shape on the phone's single universal
+      # APK, and it is the reason the version is read above.
+      - name: Name the APK
+        run: |
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk \
+            "Anthers_${{ steps.version.outputs.version }}.apk"
+
+      # The name and the tag have to agree, because one of them becomes the release's title
+      # and the other becomes the file inside it. `--check` runs on the pull request, so this
+      # only fires if a tag was cut from a commit that never passed through it.
+      - name: Check the tag names this version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          test "v${{ steps.version.outputs.version }}" = "$GITHUB_REF_NAME" || {
+            echo "The tag $GITHUB_REF_NAME does not name the version ${{ steps.version.outputs.version }}."
+            echo "Cut the tag from the commit that carries that version."
+            exit 1
+          }
+
       # A real tag push creates the draft; a dispatch run (`github.ref_name` would otherwise
       # read `main`, and the desktop's first proof run created a draft release *named main*)
       # leaves it as a workflow artifact instead, so the pipeline can be proven without
@@ -106,12 +128,12 @@ jobs:
             --draft \
             --title "Anthers Mobile ${tag#v}" \
             --generate-notes \
-            src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+            "Anthers_${{ steps.version.outputs.version }}.apk"
 
       - name: Attach the APK as a run artifact (dispatch runs only)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: anthers-mobile-release-apk
-          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          path: "Anthers_${{ steps.version.outputs.version }}.apk"
           if-no-files-found: error
