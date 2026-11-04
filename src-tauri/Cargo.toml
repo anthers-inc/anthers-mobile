@@ -1,6 +1,6 @@
 [package]
 name = "anthers-mobile"
-version = "2026.11.8"
+version = "2026.11.9"
 edition = "2021"
 description = "Anthers — the mobile app for the Anthers platform"
 authors = ["Anthers, Inc."]
