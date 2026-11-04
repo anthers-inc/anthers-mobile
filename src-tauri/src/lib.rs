@@ -28,11 +28,13 @@
 //! requests the app makes after its first paint carry the session.
 
 mod auth;
+mod browser;
 mod keystore;
 
 use tauri::{Emitter, Manager};
 
-use auth::{PendingCode, PendingVerifier};
+use auth::PendingCode;
+use browser::Browser;
 use keystore::Keystore;
 
 /// The API origin this build talks to. Override at build time:
@@ -171,6 +173,27 @@ pub fn run() {
 				.on_webview_ready(restore_session)
 				.build(),
 		)
+		// The browser handoff. Its own plugin rather than `tauri-plugin-opener`, because the
+		// verified `anthers.org` app link makes this app a candidate handler for the very URL
+		// the sign-in opens; `browser.rs` carries the whole story.
+		.plugin(
+			tauri::plugin::Builder::<tauri::Wry>::new("anthers-browser")
+				.setup(|app, api| {
+					#[cfg(target_os = "android")]
+					{
+						let handle =
+							api.register_android_plugin("org.anthers.mobile", "BrowserPlugin")?;
+						app.manage(Browser(handle));
+					}
+					#[cfg(not(target_os = "android"))]
+					{
+						let _ = api;
+						app.manage(Browser);
+					}
+					Ok(())
+				})
+				.build(),
+		)
 		.plugin(tauri_plugin_opener::init())
 		.plugin(tauri_plugin_http::init())
 		// Registered before the runtime plugin so a link that launched the app is already
@@ -182,7 +205,6 @@ pub fn run() {
 				.build(),
 		)
 		.setup(|app| {
-			app.manage(PendingVerifier::default());
 			app.manage(PendingCode::default());
 
 			// A link that opens the app while it is running arrives here. The code is kept for
