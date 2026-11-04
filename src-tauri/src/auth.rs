@@ -320,6 +320,17 @@ pub async fn await_sign_in(
 	}
 }
 
+/// The stored session token, for the page to ask for when it boots.
+///
+/// 🚨 **A pull, not a push.** The shell used to evaluate the token into the page when its
+/// keystore read finished, which lands in whatever document exists at that moment — often the
+/// blank one that the app's real page then replaces, taking the token with it. Asking on boot
+/// is the page's own business and cannot be mistimed.
+#[tauri::command]
+pub async fn session_token(store: State<'_, Keystore>) -> Result<Option<String>, String> {
+	Ok(store.read())
+}
+
 /// Whether a sign-in is still waiting to be redeemed, so a launch can resume waiting for it.
 #[tauri::command]
 pub fn has_pending_sign_in(app: AppHandle) -> bool {

@@ -59,6 +59,19 @@
                 
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+            <!-- 🚨 **The app's own scheme, written by hand and outside the generated block.** It
+                 is the fallback handoff for the browser's callback landing page: verified
+                 `anthers.org` links do not exist on a debug build, and a device can fail link
+                 verification at install time, in which case the browser stays on the callback
+                 URL. `anthers://auth/callback?code=…` opens the app whatever verification says;
+                 the code is worthless without the PKCE verifier this app kept, and the poll is
+                 what actually signs in. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="anthers" />
+            </intent-filter>
         </activity>
 
         <provider
