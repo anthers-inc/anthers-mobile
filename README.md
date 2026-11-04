@@ -230,9 +230,10 @@ moves it to the platform's latest: one platform release reaching every surface a
 of the pin, and a release that left it behind would ship an old web app under a new number.
 
 The `release` workflow builds a signed APK for every ABI and opens a **draft** release named
-`Anthers Mobile <version>` with the APK attached. **Publishing the draft is the release**: until then
-nothing has been handed out. A `workflow_dispatch` run builds the same APK and attaches it as a run
-artifact without touching any release, which is how the pipeline is proven between tags.
+`Anthers Mobile <version>` with `Anthers_<version>.apk` attached, the version read from the tree
+rather than from the tag's text. **Publishing the draft is the release**: until then nothing has been
+handed out. A `workflow_dispatch` run builds the same APK and attaches it as a run artifact without
+touching any release, which is how the pipeline is proven between tags.
 
 The signing key's durable home is Bitwarden Secrets in `Anthers Prod` — `ANTHERS_MOBILE_ANDROID_KEY_BASE64`,
 `…_KEY_ALIAS` and `…_KEY_PASSWORD` — with the working copy in this repository's `ANDROID_KEY_*`
