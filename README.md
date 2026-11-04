@@ -214,15 +214,25 @@ icon has.
 
 ## Releasing
 
-```sh
-make version                                  # the three fields must agree
-git tag v2026.11.1 && git push origin v2026.11.1
-```
+`/promote-mobile` is the whole flow as one resumable procedure: the state audit, the computed
+version bump with the platform web pin, one PR, the tag, the build watch, the draft's verification,
+and the publish. It runs from the main checkout on `main`, and only on an explicit decision to ship.
+The command file (`~/.config/opencode/commands/promote-mobile.md`) is the procedure's authority; this
+section is the shape of it.
+
+**The version is computed, never typed.** `bun run scripts/promote-version.ts` writes `package.json`,
+`src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.lock` together, and its
+`--check` is what CI runs, so four fields drifting apart fails a pull request rather than a release.
+`make version` is the same agreement check for a person reading a tree.
+
+`anthersWeb` in `package.json` names the promoted platform release the shell bundles, and the promote
+moves it to the platform's latest: one platform release reaching every surface at once is the point
+of the pin, and a release that left it behind would ship an old web app under a new number.
 
 The `release` workflow builds a signed APK for every ABI and opens a **draft** release named
-`Anthers Mobile <version>` with the APK attached. **Publishing the draft is the release** — until
-then nothing has been handed out. A `workflow_dispatch` run builds the same APK and attaches it
-as a run artifact without touching any release, which is how the pipeline is proven between tags.
+`Anthers Mobile <version>` with the APK attached. **Publishing the draft is the release**: until then
+nothing has been handed out. A `workflow_dispatch` run builds the same APK and attaches it as a run
+artifact without touching any release, which is how the pipeline is proven between tags.
 
 The signing key's durable home is Bitwarden Secrets in `Anthers Prod` — `ANTHERS_MOBILE_ANDROID_KEY_BASE64`,
 `…_KEY_ALIAS` and `…_KEY_PASSWORD` — with the working copy in this repository's `ANDROID_KEY_*`
