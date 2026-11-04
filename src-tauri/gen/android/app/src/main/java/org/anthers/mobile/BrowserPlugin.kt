@@ -4,6 +4,7 @@ package org.anthers.mobile
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.browser.customtabs.CustomTabsClient
 import androidx.core.net.toUri
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -37,7 +38,28 @@ class BrowserPlugin(private val activity: Activity) : Plugin(activity) {
     fun open(invoke: Invoke) {
         try {
             val url = invoke.parseArgs(OpenArgs::class.java).url
-            val view = Intent(Intent.ACTION_VIEW, url.toUri())
+            val uri = url.toUri()
+
+            // 🚨 **Name the browser, do not describe the URL.** A browser registers a
+            // `CustomTabsService` to say it can render pages, and asking for that service is a
+            // different lookup from resolving an `ACTION_VIEW` against installed URL filters —
+            // which is the one that came back empty on a phone whose browser opens the same URL
+            // happily when it is pasted. With a package in hand the intent is explicit, so no
+            // matching happens at all.
+            val browser = CustomTabsClient.getPackageName(activity, null)
+            if (browser != null) {
+                val explicit = Intent(Intent.ACTION_VIEW, uri)
+                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                    .setPackage(browser)
+                explicit.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                activity.applicationContext.startActivity(explicit)
+                invoke.resolve()
+                return
+            }
+
+            // No browser offers Custom Tabs: fall back to whatever the system matches, which is
+            // every other browser.
+            val view = Intent(Intent.ACTION_VIEW, uri)
                 .addCategory(Intent.CATEGORY_BROWSABLE)
 
             // The direct path: every visible handler for this URL except this app. It is empty
