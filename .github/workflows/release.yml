@@ -60,14 +60,29 @@ jobs:
       # 🚨 The key's durable home is Bitwarden Secrets; these repository secrets are the
       # working copy the build reads, and `bundle.licenseFile`'s sibling rule applies — the
       # file exists only for the length of the run.
+      #
+      # 🚨 **Every value reaches the shell through `env:`, never as `${{ }}` inside the
+      # script.** An expression is substituted before bash parses the line, so a password
+      # carrying a quote, a `$(…)` or a newline would run as shell syntax; as an environment
+      # variable the same characters are inert. It also keeps the value out of the rendered
+      # script, which is what a `set -x` trace prints.
+      #
+      # `umask 077` is what stops a window where the two files are readable by every user on
+      # the runner — the keystore is the app's update identity, so a copy of it is a copy of
+      # every future release.
       - name: Configure signing
+        env:
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
         run: |
+          umask 077
           cd src-tauri/gen/android
           printf 'keyAlias=%s\npassword=%s\nstoreFile=%s\n' \
-            "${{ secrets.ANDROID_KEY_ALIAS }}" \
-            "${{ secrets.ANDROID_KEY_PASSWORD }}" \
+            "$KEY_ALIAS" \
+            "$KEY_PASSWORD" \
             "$RUNNER_TEMP/keystore.jks" > keystore.properties
-          base64 -d > "$RUNNER_TEMP/keystore.jks" <<< "${{ secrets.ANDROID_KEY_BASE64 }}"
+          base64 -d > "$RUNNER_TEMP/keystore.jks" <<< "$KEY_BASE64"
           chmod 600 keystore.properties "$RUNNER_TEMP/keystore.jks"
 
       # The release's name reads the version the three fields carry rather than the tag's
@@ -98,18 +113,22 @@ jobs:
       # `Anthers_<version>_<arch>.deb`; this is that shape on the phone's single universal
       # APK, and it is the reason the version is read above.
       - name: Name the APK
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           cp src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk \
-            "Anthers_${{ steps.version.outputs.version }}.apk"
+            "Anthers_${VERSION}.apk"
 
       # The name and the tag have to agree, because one of them becomes the release's title
       # and the other becomes the file inside it. `--check` runs on the pull request, so this
       # only fires if a tag was cut from a commit that never passed through it.
       - name: Check the tag names this version
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          test "v${{ steps.version.outputs.version }}" = "$GITHUB_REF_NAME" || {
-            echo "The tag $GITHUB_REF_NAME does not name the version ${{ steps.version.outputs.version }}."
+          test "v${VERSION}" = "$GITHUB_REF_NAME" || {
+            echo "The tag $GITHUB_REF_NAME does not name the version ${VERSION}."
             echo "Cut the tag from the commit that carries that version."
             exit 1
           }
@@ -122,13 +141,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           tag="${GITHUB_REF_NAME}"
           gh release create "$tag" \
             --draft \
             --title "Anthers Mobile ${tag#v}" \
             --generate-notes \
-            "Anthers_${{ steps.version.outputs.version }}.apk"
+            "Anthers_${VERSION}.apk"
 
       - name: Attach the APK as a run artifact (dispatch runs only)
         if: github.event_name == 'workflow_dispatch'
