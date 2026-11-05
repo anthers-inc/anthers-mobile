@@ -266,3 +266,47 @@ pub fn run() {
 		.run(tauri::generate_context!())
 		.expect("error while running the Anthers mobile shell");
 }
+
+#[cfg(test)]
+mod tests {
+	/// The two properties a packaged build must keep, asserted beside the config they
+	/// live in: a content security policy is set, and the window has no command that
+	/// opens an address or spawns anything. The policy's sources are read rather than
+	/// restated, so a later edit that relaxes one stays visible in its own diff; what
+	/// fails here is a policy that quietly returns to `null`.
+	#[test]
+	fn the_window_runs_under_a_policy_and_opens_nothing() {
+		let conf_text =
+			std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json"))
+				.unwrap();
+		let conf: serde_json::Value = serde_json::from_str(&conf_text).unwrap();
+		let csp = &conf["app"]["security"]["csp"];
+		assert!(csp.is_object(), "a packaged build runs under a CSP");
+		assert_eq!(csp["default-src"], "'self'");
+		assert_eq!(csp["object-src"], "'none'");
+		assert_eq!(csp["base-uri"], "'none'");
+		assert!(
+			!csp.to_string().contains("unsafe-eval"),
+			"the release policy never allows eval"
+		);
+
+		let caps_text = std::fs::read_to_string(concat!(
+			env!("CARGO_MANIFEST_DIR"),
+			"/capabilities/default.json"
+		))
+		.unwrap();
+		let caps: serde_json::Value = serde_json::from_str(&caps_text).unwrap();
+		let permissions: Vec<&str> = caps["permissions"]
+			.as_array()
+			.expect("the default capability lists its permissions")
+			.iter()
+			.filter_map(|p| p.as_str())
+			.collect();
+		assert!(
+			!permissions
+				.iter()
+				.any(|p| p.starts_with("opener") || p.starts_with("shell")),
+			"the window opens nothing and spawns nothing: {permissions:?}"
+		);
+	}
+}
