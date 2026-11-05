@@ -165,27 +165,51 @@ same safe frame.
 
 ## Signing in
 
-The shell never asks for a password. `/api/auth/desktop/start` registers a PKCE challenge,
-the system browser opens `/desktop/authorize?challenge=…&redirect=mobile&handle=…`, and the
-person authenticates at whichever server holds their handle. That page returns a one-time
-code over `https://anthers.org/auth/callback`, which the shell redeems for a session token it
-keeps in the Android keystore. The sign-in screen asks for the handle first, exactly as
-`/login` does, because a phone browser usually has no Anthers session of its own.
+The shell never asks for a password. The sign-in screen asks for a handle exactly as `/login`
+does, and `/api/auth/desktop/start` registers a PKCE challenge for this attempt. The system
+browser then opens `/desktop/authorize?challenge=…&redirect=mobile&handle=…`, and:
 
-Two things about that handoff are load-bearing and easy to undo:
+- **A browser with no Anthers session** starts the OAuth at whichever server holds the handle,
+  carrying the app's challenge in the OAuth state. The server mints the app's one-time code at
+  the callback and sends the browser to `https://anthers.org/auth/callback?code=…`. Nothing
+  asks the person to approve the device a second time: the identity server's own consent
+  screen is the grant.
+- **A browser already signed in** mints the code on the authorize page and goes to the same
+  place.
+
+That landing page hands the code to the app — over the verified `https://anthers.org` link,
+which the release certificate is registered for, or over `anthers://` from the page itself
+when verification does not take it. The shell then redeems the code for a session token and
+keeps it in the Android keystore. From there the app is signed in, and stays signed in across
+restarts.
+
+Five things about that handoff are load-bearing and easy to undo:
 
 - 🚨 **The browser is chosen with this app excluded.** The shell verifies `anthers.org` app
-  links so the callback can return to it, which also makes it a handler for the authorize
-  page it is handing over. A plain `ACTION_VIEW` resolves back into this app, whose activity
-  is `singleTask`, so the window sits still and the handoff does nothing with no error to
-  show. `BrowserPlugin.kt` asks for the URL's handlers, drops this package, and targets the
-  browser; the manifest's `<queries>` block is what lets Android 11 and later see browsers at
-  all. The block survives `tauri android build` because only the deep-link intent filter is
-  regenerated.
+  links so the callback can return to it, which also makes it a handler for the authorize page
+  it is handing over. A plain `ACTION_VIEW` resolves back into this app, whose activity is
+  `singleTask`, so the window sits still and the handoff does nothing with no error to show.
+  `BrowserPlugin.kt` names a browser by its Custom Tabs service and targets it explicitly,
+  which needs no URL matching at all; the manifest's `<queries>` block is what lets Android 11
+  and later see browsers. Both survive `tauri android build`, which regenerates only the
+  deep-link intent filter.
 - 🚨 **The PKCE verifier is on disk, not in memory.** Android reclaims this app while the
   person is in the browser, so a verifier that lived in a `Mutex` was gone when the code came
-  back and every completed sign-in ended at "This sign-in didn't start here". It is written to
-  the app's private data directory when the challenge is accepted and consumed on redemption.
+  back. It is written to the app's private data directory with its challenge when the server
+  accepts the start, and consumed on redemption.
+- 🚨 **The app asks the server whether it is signed in, rather than waiting for the code to
+  arrive over a link.** `await_sign_in` polls `/api/auth/desktop/poll/:challenge`, so a browser
+  that never hands off, or a process Android reclaimed, still finishes. A code is single-use
+  and the server burns its row on any redemption attempt, so **the poll is the phone's only
+  redeemer**; the callback link's one job on Android is to open the app.
+- 🚨 **The page pulls its session at boot; the shell must not push it.** The keystore read
+  blocks, so the shell answers a `session_token` command when the page asks. The old push ran
+  when the read finished and often landed in the blank document the real page then replaced,
+  which is how a valid session rendered as a signed-out app.
+- 🚨 **After a successful redemption the shell reloads the webview.** The exchange usually
+  finishes while the browser still owns the screen, and Android freezes a backgrounded
+  WebView — a queued promise or state update there may never run. The reloaded page pulls the
+  token on boot, which cannot be mistimed.
 
 ## Layout
 
