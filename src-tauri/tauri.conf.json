@@ -20,7 +20,37 @@
 			}
 		],
 		"security": {
-			"csp": null
+			"csp": {
+				"default-src": "'self'",
+				"script-src": "'self' https://js.stripe.com https://*.js.stripe.com",
+				"style-src": "'self'",
+				"style-src-attr": "'unsafe-inline'",
+				"img-src": "'self' data: blob: https:",
+				"media-src": "'self' blob: https://anthers.org",
+				"font-src": "'self'",
+				"connect-src": "'self' https://anthers.org https://42e9a13ee9f7af4092581dc675c9f4da.r2.cloudflarestorage.com ipc: http://ipc.localhost https://api.stripe.com",
+				"frame-src": "https: blob:",
+				"worker-src": "'self' blob:",
+				"manifest-src": "'self'",
+				"object-src": "'none'",
+				"base-uri": "'none'",
+				"form-action": "'self'"
+			},
+			"devCsp": {
+				"default-src": "'self'",
+				"script-src": "'self' 'unsafe-inline'",
+				"style-src": "'self' 'unsafe-inline'",
+				"img-src": "'self' data: blob: http: https://anthers.org https://cdn.anthers.org",
+				"media-src": "'self' blob: http:",
+				"font-src": "'self' data:",
+				"connect-src": "'self' http: ws: ipc: http://ipc.localhost https://api.stripe.com",
+				"frame-src": "https: http: blob:",
+				"worker-src": "'self' blob:",
+				"manifest-src": "'self'",
+				"object-src": "'none'",
+				"base-uri": "'none'",
+				"form-action": "'self'"
+			}
 		}
 	},
 	"bundle": {
@@ -28,8 +58,8 @@
 		"publisher": "Anthers, Inc.",
 		"copyright": "Copyright (c) 2026 Anthers, Inc.",
 		"category": "Entertainment",
-		"shortDescription": "Anthers — the creative garden, in your hand",
-		"longDescription": "The Anthers app for Android and iOS — the whole platform in a native app, for readers and creators alike: browse, read, watch and play, publish and manage a catalog and posts. It is the Anthers experience you know from the web, not a separate tool.",
+		"shortDescription": "Anthers \u2014 the creative garden, in your hand",
+		"longDescription": "The Anthers app for Android and iOS \u2014 the whole platform in a native app, for readers and creators alike: browse, read, watch and play, publish and manage a catalog and posts. It is the Anthers experience you know from the web, not a separate tool.",
 		"licenseFile": "../LICENSE",
 		"icon": [
 			"icons/32x32.png",

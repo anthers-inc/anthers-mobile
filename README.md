@@ -140,6 +140,24 @@ inheriting the desktop's home preference or its settings section.
 That origin is already admitted by the API's CORS and CSRF allow-lists, because Android produces
 the same origin Windows does. No platform change was needed for it.
 
+## The content security policy
+
+`src-tauri/tauri.conf.json` carries the policy a release build runs under, in `csp`, and
+the looser one a debug build runs under in `devCsp`. Android is the platform where Tauri
+proxies the dev server, so the dev policy is the one a developer actually meets. The
+release policy defaults to the bundle's own origin, allows scripts from the bundle plus
+Stripe's payment script, images from any HTTPS address because a post may point at one,
+media from the API origin, frames from any HTTPS address because a creator's embedded
+build is served from one, and allows no embedded object and no base URI at all. Tauri
+appends the hashes and nonces its own assets need at build time, so the policy does not
+list the app's files by name.
+
+Two of its entries are deployment constants rather than app code: the API origin and the
+R2 endpoint that presigned uploads go straight to. A build pointed at another origin with
+`ANTHERS_API_BASE` needs that origin added to `connect-src`, and moving the storage account
+is the same kind of change. Either one shows up as a blocked request in the window rather
+than a failed build.
+
 ## Safe areas
 
 The app targets SDK 37 and calls `enableEdgeToEdge()`, and Android 15 and later enforce
